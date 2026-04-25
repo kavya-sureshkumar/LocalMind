@@ -1,0 +1,15 @@
+# Cargo build output
+/target/
+
+# Tauri-generated mobile scaffolding and capability schemas
+/gen/schemas
+/gen/android
+/gen/apple
+
+# Bundled installers
+/release/
+*.dmg
+*.msi
+*.deb
+*.AppImage
+*.exe.zip

@@ -1,0 +1,122 @@
+import { isTauri } from "./util";
+import type {
+  HardwareInfo,
+  InstalledModel,
+  LlamaSettings,
+  LlamaStatus,
+  ModelListing,
+  RagDocument,
+  RetrievedChunk,
+  SdImage,
+  SdRequest,
+} from "./types";
+
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (isTauri()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<T>(cmd, args);
+  }
+  const res = await fetch(`/api/cmd/${cmd}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(args ?? {}),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function listen<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
+  if (isTauri()) {
+    const { listen } = await import("@tauri-apps/api/event");
+    const unlisten = await listen<T>(event, (e) => handler(e.payload));
+    return unlisten;
+  }
+  const es = new EventSource(`/api/events?topic=${encodeURIComponent(event)}`);
+  es.onmessage = (e) => {
+    try { handler(JSON.parse(e.data) as T); } catch { /* ignore */ }
+  };
+  return () => es.close();
+}
+
+export const api = {
+  detectHardware: () => invoke<HardwareInfo>("detect_hardware"),
+  searchModels: (query: string, limit = 20) => invoke<ModelListing[]>("search_models", { query, limit }),
+  downloadModel: (repo: string, filename: string, kind = "llm") =>
+    invoke<InstalledModel>("download_model", { repo, filename, kind }),
+  listInstalledModels: () => invoke<InstalledModel[]>("list_installed_models"),
+  deleteModel: (id: string) => invoke<void>("delete_model", { id }),
+  startLlama: (settings: LlamaSettings) => invoke<LlamaStatus>("start_llama", { settings }),
+  stopLlama: () => invoke<void>("stop_llama"),
+  llamaStatus: () => invoke<LlamaStatus>("llama_status"),
+  startEmbeddingServer: (modelId: string) => invoke<LlamaStatus>("start_embedding_server", { modelId }),
+  stopEmbeddingServer: () => invoke<void>("stop_embedding_server"),
+  getLanUrl: () => invoke<string | null>("get_lan_url"),
+  ensureEngine: () => invoke<string>("ensure_engine"),
+  ragList: () => invoke<RagDocument[]>("rag_list"),
+  ragDelete: (id: string) => invoke<void>("rag_delete", { id }),
+  ragIngest: (path: string) => invoke<RagDocument>("rag_ingest", { path }),
+  ragSearch: (query: string, topK = 5, docIds?: string[]) =>
+    invoke<RetrievedChunk[]>("rag_search", { query, topK, docIds }),
+  sdGenerate: (request: SdRequest) => invoke<SdImage>("sd_generate", { request }),
+  sdBusy: () => invoke<boolean>("sd_busy"),
+  ensureSd: () => invoke<string>("ensure_sd"),
+};
+
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
+export interface ChatTurn {
+  role: "user" | "assistant" | "system";
+  content: string | ChatContentPart[];
+}
+
+export async function* streamChat(
+  port: number,
+  modelId: string,
+  messages: ChatTurn[],
+  opts: { temperature?: number; maxTokens?: number; signal?: AbortSignal } = {},
+): AsyncGenerator<string> {
+  const base = isTauri() ? `http://127.0.0.1:${port}` : "";
+  const res = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    signal: opts.signal,
+    body: JSON.stringify({
+      model: modelId,
+      messages,
+      stream: true,
+      temperature: opts.temperature ?? 0.7,
+      top_p: 0.9,
+      max_tokens: opts.maxTokens ?? 1024,
+      repeat_penalty: 1.1,
+      frequency_penalty: 0.3,
+      presence_penalty: 0.0,
+    }),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`chat request failed: ${res.status} ${await res.text().catch(() => "")}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line || !line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (data === "[DONE]") return;
+      try {
+        const json = JSON.parse(data);
+        const delta = json.choices?.[0]?.delta?.content ?? "";
+        if (delta) yield delta;
+      } catch { /* keep reading */ }
+    }
+  }
+}

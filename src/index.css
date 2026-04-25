@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-bg: #0a0a0b;
+  --color-panel: #111113;
+  --color-panel-2: #17171a;
+  --color-border: #26262b;
+  --color-border-soft: #1e1e22;
+  --color-accent: #7c5cff;
+  --color-accent-2: #4c7dff;
+  --color-text: #e8e8ea;
+  --color-text-muted: #9a9aa3;
+  --color-text-subtle: #6b6b74;
+  --color-danger: #ef4444;
+  --color-success: #10b981;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* { box-sizing: border-box; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 6px;
+  border: 2px solid var(--color-bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-subtle); }
+
+@layer utilities {
+  .glass {
+    background: color-mix(in srgb, var(--color-panel) 78%, transparent);
+    backdrop-filter: blur(12px);
+  }
+  .gradient-accent {
+    background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-2) 100%);
+  }
+}
+
+.prose-msg pre {
+  background: #0d0d10;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-size: 13px;
+}
+.prose-msg code {
+  background: #1a1a1f;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+.prose-msg pre code { background: none; padding: 0; }
+.prose-msg p { margin: 0.4em 0; }
+.prose-msg p:first-child { margin-top: 0; }
+.prose-msg p:last-child { margin-bottom: 0; }
+.prose-msg ul, .prose-msg ol { padding-left: 1.3em; margin: 0.5em 0; }
+.prose-msg h1, .prose-msg h2, .prose-msg h3 { font-weight: 600; margin: 0.6em 0 0.3em; }
+.prose-msg a { color: var(--color-accent); text-decoration: underline; }
+.prose-msg table { border-collapse: collapse; }
+.prose-msg th, .prose-msg td { border: 1px solid var(--color-border); padding: 4px 8px; }
