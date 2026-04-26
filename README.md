@@ -48,10 +48,21 @@ LocalMind is a desktop app that runs open-source language models locally and exp
 | Node.js 18+ | `brew install node` | distro pkg | [nodejs.org](https://nodejs.org/) |
 | Rust (stable) | [rustup.rs](https://rustup.rs) | [rustup.rs](https://rustup.rs) | [rustup.rs](https://rustup.rs) |
 | Xcode CLT | `xcode-select --install` | — | — |
+| VS C++ Build Tools | — | — | [see below](#windows-note-vs-build-tools) |
 | WebView2 | — | — | preinstalled on Win 11 |
 | webkit2gtk | — | distro pkg | — |
 
 llama.cpp itself is downloaded automatically on first model load — no manual setup.
+
+#### Windows note: VS Build Tools
+
+Rust on Windows uses the MSVC toolchain, which requires the **Visual Studio C++ Build Tools**. Install them before running `npm run tauri dev`:
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive"
+```
+
+Alternatively, download the installer from [visualstudio.microsoft.com/visual-cpp-build-tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and select the **"Desktop development with C++"** workload. Restart your terminal after installation.
 
 ### Run in development
 
