@@ -6,6 +6,7 @@ mod models;
 mod rag;
 mod sd;
 mod server;
+mod synapse;
 
 use llama::{LlamaSettings, LlamaState, LlamaStatus};
 use models::{InstalledModel, ModelKind, ModelListing};
@@ -13,12 +14,14 @@ use rag::{Document, RagState, RetrievedChunk};
 use sd::{SdImage, SdRequest, SdState};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+use synapse::{SynapseState, SynapseWorkerStatus};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 struct AppStateHolder {
     llama: Arc<LlamaState>,
     rag: Arc<RagState>,
     sd: Arc<SdState>,
+    synapse: Arc<SynapseState>,
     lan_url: parking_lot_lite::Once<String>,
     pin: String,
     #[allow(dead_code)]
@@ -220,6 +223,31 @@ async fn ensure_sd(app: AppHandle) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn start_synapse_worker(
+    app: AppHandle,
+    state: State<'_, Arc<AppStateHolder>>,
+    port: Option<u16>,
+) -> Result<SynapseWorkerStatus, String> {
+    state
+        .synapse
+        .start_worker(&app, port)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn stop_synapse_worker(state: State<'_, Arc<AppStateHolder>>) -> Result<(), String> {
+    state.synapse.stop_worker().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn synapse_worker_status(
+    state: State<'_, Arc<AppStateHolder>>,
+) -> Result<SynapseWorkerStatus, String> {
+    Ok(state.synapse.status().await)
+}
+
 fn generate_pin() -> String {
     let raw = uuid::Uuid::new_v4().as_u128();
     format!("{:06}", (raw % 1_000_000) as u32)
@@ -230,12 +258,14 @@ pub fn run() {
     let llama = LlamaState::new();
     let rag = RagState::new();
     let sd = SdState::new();
+    let synapse = SynapseState::new();
     let pin = generate_pin();
     let tokens = Arc::new(Mutex::new(HashSet::new()));
     let holder = Arc::new(AppStateHolder {
         llama: llama.clone(),
         rag: rag.clone(),
         sd: sd.clone(),
+        synapse: synapse.clone(),
         lan_url: parking_lot_lite::Once::new(),
         pin: pin.clone(),
         tokens: tokens.clone(),
@@ -290,6 +320,9 @@ pub fn run() {
             sd_generate,
             sd_busy,
             ensure_sd,
+            start_synapse_worker,
+            stop_synapse_worker,
+            synapse_worker_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

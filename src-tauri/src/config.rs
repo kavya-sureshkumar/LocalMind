@@ -34,6 +34,15 @@ pub fn llama_server_path() -> PathBuf {
     bin_dir().join(name)
 }
 
+pub fn rpc_server_path() -> PathBuf {
+    let name = if cfg!(windows) {
+        "rpc-server.exe"
+    } else {
+        "rpc-server"
+    };
+    bin_dir().join(name)
+}
+
 pub fn sd_binary_path() -> PathBuf {
     let name = if cfg!(windows) { "sd.exe" } else { "sd" };
     bin_dir().join(name)

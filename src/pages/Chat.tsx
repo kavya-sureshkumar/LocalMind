@@ -16,7 +16,7 @@ export function Chat({ onOpenMenu }: { onOpenMenu?: () => void } = {}) {
   const {
     conversations, activeConvId, createConversation, updateConversation, renameConversation,
     activeModelId, setActiveModelId, installed, llama, setLlama, setView,
-    ragDocs, setRagDocs, toggleRagDoc,
+    ragDocs, setRagDocs, toggleRagDoc, synapse,
   } = useApp();
   const remote = !isTauri();
   // On the phone we don't pick a model — we use whatever the host has loaded.
@@ -75,7 +75,8 @@ export function Chat({ onOpenMenu }: { onOpenMenu?: () => void } = {}) {
     if (llama.running && llama.modelId === modelId && (llama.mmprojId ?? undefined) === wantMmproj) {
       return;
     }
-    const status = await api.startLlama({ modelId, mmprojId: wantMmproj });
+    const synapseWorkers = synapse.workers.length > 0 ? synapse.workers : undefined;
+    const status = await api.startLlama({ modelId, mmprojId: wantMmproj, synapseWorkers });
     setLlama(status);
   }
 

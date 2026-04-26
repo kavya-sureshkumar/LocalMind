@@ -10,6 +10,7 @@ import type {
   RetrievedChunk,
   SdImage,
   SdRequest,
+  SynapseWorkerStatus,
 } from "./types";
 
 function connection() {
@@ -105,6 +106,10 @@ export const api = {
   sdBusy: () => invoke<boolean>("sd_busy"),
   ensureSd: () => invoke<string>("ensure_sd"),
   getLanPin: () => invoke<string>("get_lan_pin"),
+  startSynapseWorker: (port?: number) =>
+    invoke<SynapseWorkerStatus>("start_synapse_worker", { port }),
+  stopSynapseWorker: () => invoke<void>("stop_synapse_worker"),
+  synapseWorkerStatus: () => invoke<SynapseWorkerStatus>("synapse_worker_status"),
 };
 
 export type ChatContentPart =

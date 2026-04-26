@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Cpu, Wifi, Smartphone, Copy, Check, KeyRound, LogOut } from "lucide-react";
+import { Cpu, Wifi, Smartphone, Copy, Check, KeyRound, LogOut, Network, Power } from "lucide-react";
 import QRCode from "qrcode";
 import { useApp } from "../lib/store";
 import { api } from "../lib/api";
@@ -8,19 +8,60 @@ import { listen } from "../lib/api";
 import { isTauri } from "../lib/util";
 
 export function Settings() {
-  const { hardware, lanUrl, connection, setConnection } = useApp();
+  const {
+    hardware, lanUrl, connection, setConnection,
+    synapse, setSynapseWorkerEnabled, setSynapseWorkerPort, setSynapseWorkers,
+  } = useApp();
   const remote = !isTauri();
   const [engineStatus, setEngineStatus] = useState<string>("not checked");
   const [engineProgress, setEngineProgress] = useState<BinaryProgress | null>(null);
   const [copied, setCopied] = useState<"url" | "pin" | null>(null);
   const [pin, setPin] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [workerBusy, setWorkerBusy] = useState(false);
+  const [workerError, setWorkerError] = useState<string | null>(null);
+  // Edited as a single string so the user can type commas freely; we split on
+  // save / on every keystroke to keep the persisted store in `string[]` form.
+  const [workersText, setWorkersText] = useState(synapse.workers.join(", "));
 
   useEffect(() => {
     if (remote) return;
     listen<BinaryProgress>("binary:progress", (p) => setEngineProgress(p));
     api.getLanPin().then(setPin).catch(() => {});
-  }, [remote]);
+    // Reconcile the store toggle with whatever the backend actually has running
+    // (e.g. after a desktop restart with worker mode previously enabled).
+    api.synapseWorkerStatus()
+      .then((s) => setSynapseWorkerEnabled(s.running))
+      .catch(() => {});
+  }, [remote, setSynapseWorkerEnabled]);
+
+  async function toggleWorker(next: boolean) {
+    setWorkerBusy(true);
+    setWorkerError(null);
+    try {
+      if (next) {
+        const status = await api.startSynapseWorker(synapse.workerPort);
+        setSynapseWorkerEnabled(status.running);
+        setSynapseWorkerPort(status.port);
+      } else {
+        await api.stopSynapseWorker();
+        setSynapseWorkerEnabled(false);
+      }
+    } catch (e: any) {
+      setWorkerError(e?.message ?? String(e));
+    } finally {
+      setWorkerBusy(false);
+    }
+  }
+
+  function commitWorkersText(text: string) {
+    setWorkersText(text);
+    const parsed = text
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    setSynapseWorkers(parsed);
+  }
 
   // Render a QR encoding {url, pin} JSON so a future scan-to-pair flow can
   // populate both fields in one tap.
@@ -148,6 +189,79 @@ export function Settings() {
                   alt="Scan from phone to copy URL + PIN"
                   className="w-[160px] h-[160px] rounded-md border border-[var(--color-border)] bg-white"
                 />
+              )}
+            </div>
+          </Section>
+        )}
+
+        {!remote && (
+          <Section title="Synapse — pool machines on your LAN" icon={<Network size={15} />}>
+            <p className="text-sm text-[var(--color-text-muted)] mb-4">
+              Run a model whose weights don't fit on one machine by pipeline-sharding layers across multiple
+              computers on your local Wi-Fi. <span className="text-[var(--color-text-subtle)]">Phase 1 (manual): toggle worker mode below on each helper machine, then list their addresses on the host. Wired Ethernet is strongly recommended for tokens/sec.</span>
+            </p>
+
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-panel-2)] p-3 mb-4">
+              <div className="flex items-start gap-3">
+                <Power
+                  size={15}
+                  className={synapse.workerEnabled ? "text-[var(--color-success)] mt-0.5" : "text-[var(--color-text-muted)] mt-0.5"}
+                />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">Run as a Synapse worker</div>
+                      <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                        Spawns <code>rpc-server</code> on this machine so a host can offload layers to it.
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => toggleWorker(!synapse.workerEnabled)}
+                      disabled={workerBusy}
+                      className={`text-sm px-3 py-1.5 rounded-md border ${
+                        synapse.workerEnabled
+                          ? "bg-[var(--color-success)]/10 border-[var(--color-success)]/40 text-[var(--color-success)]"
+                          : "bg-[var(--color-panel)] border-[var(--color-border)] hover:border-[var(--color-accent)]/60"
+                      } disabled:opacity-50`}
+                    >
+                      {workerBusy ? "…" : synapse.workerEnabled ? "Stop worker" : "Start worker"}
+                    </button>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+                    <span>Listen port:</span>
+                    <input
+                      type="number"
+                      value={synapse.workerPort}
+                      disabled={synapse.workerEnabled}
+                      onChange={(e) => setSynapseWorkerPort(parseInt(e.target.value, 10) || 50052)}
+                      className="w-20 bg-[var(--color-panel)] border border-[var(--color-border)] rounded px-2 py-0.5 text-[var(--color-text)] disabled:opacity-50"
+                    />
+                    <span className="text-[var(--color-text-subtle)]">(default 50052)</span>
+                  </div>
+                  {workerError && (
+                    <div className="mt-2 text-xs text-[var(--color-danger)]">{workerError}</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div className="text-sm font-medium mb-1">Workers (this machine is the host)</div>
+              <div className="text-xs text-[var(--color-text-muted)] mb-2">
+                Comma-separated <code>host:port</code>. Leave empty to run a model only on this machine.
+              </div>
+              <textarea
+                value={workersText}
+                onChange={(e) => commitWorkersText(e.target.value)}
+                placeholder="192.168.1.50:50052, mac-mini.local:50052"
+                rows={2}
+                className="w-full text-sm font-mono bg-[var(--color-panel-2)] border border-[var(--color-border)] rounded-md px-3 py-2 placeholder:text-[var(--color-text-subtle)]"
+              />
+              {synapse.workers.length > 0 && (
+                <div className="mt-2 text-xs text-[var(--color-text-muted)]">
+                  {synapse.workers.length} worker{synapse.workers.length === 1 ? "" : "s"} configured · applied
+                  on the next model load.
+                </div>
               )}
             </div>
           </Section>

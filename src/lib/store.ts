@@ -81,6 +81,14 @@ interface AppState {
   // null on desktop (Tauri) — desktop talks to its own backend via invoke().
   connection: { url: string; token: string } | null;
   setConnection: (c: { url: string; token: string } | null) => void;
+
+  // Synapse: distributed inference across LAN machines (Phase 1: manual).
+  // `workers` is a list of `host:port` strings the host appends as `--rpc`.
+  // `workerEnabled` reflects whether *this* machine is running rpc-server.
+  synapse: { workerEnabled: boolean; workerPort: number; workers: string[] };
+  setSynapseWorkerEnabled: (enabled: boolean) => void;
+  setSynapseWorkerPort: (port: number) => void;
+  setSynapseWorkers: (workers: string[]) => void;
 }
 
 const emptyLlama: LlamaStatus = {
@@ -194,6 +202,14 @@ export const useApp = create<AppState>()(
 
       connection: null,
       setConnection: (c) => set({ connection: c }),
+
+      synapse: { workerEnabled: false, workerPort: 50052, workers: [] },
+      setSynapseWorkerEnabled: (workerEnabled) =>
+        set((s) => ({ synapse: { ...s.synapse, workerEnabled } })),
+      setSynapseWorkerPort: (workerPort) =>
+        set((s) => ({ synapse: { ...s.synapse, workerPort } })),
+      setSynapseWorkers: (workers) =>
+        set((s) => ({ synapse: { ...s.synapse, workers } })),
     }),
     {
       name: "localmind-store",
@@ -206,6 +222,7 @@ export const useApp = create<AppState>()(
         activeSdModelId: s.activeSdModelId,
         sdImages: s.sdImages,
         connection: s.connection,
+        synapse: s.synapse,
       }),
     },
   ),
