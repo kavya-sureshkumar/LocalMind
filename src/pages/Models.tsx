@@ -5,7 +5,7 @@ import { useApp } from "../lib/store";
 import { formatBytes } from "../lib/util";
 
 export function Models() {
-  const { installed, setInstalled, activeModelId, setActiveModelId, llama, setLlama, setView } = useApp();
+  const { installed, setInstalled, activeModelId, setActiveModelId, llama, setLlama, setView, synapse } = useApp();
 
   useEffect(() => {
     api.listInstalledModels().then(setInstalled).catch(console.error);
@@ -27,7 +27,8 @@ export function Models() {
     const mmprojId = model?.kind === "vision"
       ? (mmprojs.find((m) => m.repo === model.repo) ?? mmprojs[0])?.id
       : undefined;
-    const s = await api.startLlama({ modelId: id, mmprojId });
+    const synapseWorkers = synapse.workers.length > 0 ? synapse.workers : undefined;
+    const s = await api.startLlama({ modelId: id, mmprojId, synapseWorkers });
     setLlama(s);
   }
 

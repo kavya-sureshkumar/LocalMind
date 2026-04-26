@@ -67,6 +67,14 @@ export interface LlamaSettings {
   port?: number;
   mmprojId?: string;
   flashAttn?: boolean;
+  /** Synapse: comma-separated `host:port` workers to pipeline-shard layers across. */
+  synapseWorkers?: string[];
+}
+
+export interface SynapseWorkerStatus {
+  running: boolean;
+  port: number;
+  pid: number | null;
 }
 
 export interface ModelDownloadProgress {

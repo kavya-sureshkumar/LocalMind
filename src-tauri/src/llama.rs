@@ -18,6 +18,10 @@ pub struct LlamaSettings {
     pub port: Option<u16>,
     pub mmproj_id: Option<String>,
     pub flash_attn: Option<bool>,
+    /// Comma-separated `host:port` Synapse workers (Phase 1: manual entry).
+    /// When set, llama-server is launched with `--rpc <list>` so layers are
+    /// pipeline-sharded across this host plus each worker.
+    pub synapse_workers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -134,6 +138,21 @@ impl LlamaState {
         } else {
             "off"
         });
+        // Synapse: pipeline-shard layers across remote rpc-server workers.
+        // Validated upstream (frontend trims/filters), but we also drop empties
+        // here so a stray comma can't turn into "--rpc ,host:port".
+        if let Some(workers) = &settings.synapse_workers {
+            let csv = workers
+                .iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(",");
+            if !csv.is_empty() {
+                cmd.arg("--rpc").arg(&csv);
+            }
+        }
+
         let mut loaded_mmproj: Option<String> = None;
         if let Some(mmproj_id) = &settings.mmproj_id {
             if let Ok(p) = models::model_path(mmproj_id) {
@@ -241,7 +260,7 @@ fn pipe_output(app: &AppHandle, child: &mut Child, tag: &str) {
     }
 }
 
-async fn kill_orphan_on_port(port: u16) {
+pub(crate) async fn kill_orphan_on_port(port: u16) {
     #[cfg(target_family = "unix")]
     {
         let out = tokio::process::Command::new("lsof")
