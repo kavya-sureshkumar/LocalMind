@@ -56,7 +56,7 @@ llama.cpp itself is downloaded automatically on first model load — no manual s
 ### Run in development
 
 ```bash
-git clone https://github.com/<you>/LocalMind.git
+git clone https://github.com/s-suryakiran/LocalMind.git
 cd LocalMind
 npm install
 npm run tauri dev
@@ -165,7 +165,7 @@ Good first issues:
 - Translations / i18n
 - Lighter mobile UI
 
-If you're not sure where to start, open a discussion or pick anything labeled [`good first issue`](https://github.com/<you>/LocalMind/labels/good%20first%20issue).
+If you're not sure where to start, open a discussion or pick anything labeled [`good first issue`](https://github.com/s-suryakiran/LocalMind/labels/good%20first%20issue).
 
 ## Roadmap
 
