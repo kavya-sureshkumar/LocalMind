@@ -51,9 +51,35 @@ A vision model needs **two files** from the same repo:
 
 Both must come from the same author/repo or the projector won't align with the model's vision tower. The marketplace doesn't auto-pair them — download both manually from the file list.
 
-### LAN access from phone/tablet
+### Phone / tablet (PWA)
 
-While `tauri dev` (or the built app) is running, look at **Settings → Access from other devices** for a `http://<your-lan-ip>:3939` URL. Open it on any device on the same Wi-Fi for the full UI without installing anything. Disabled by default outside dev — embedded server only listens on the LAN, never on `0.0.0.0` publicly.
+LocalMind ships a chat-only mobile UI as an installable PWA, served from the same LAN endpoint. The pairing flow:
+
+1. On the **desktop**, open Settings → **Pair a phone or tablet**. You'll see the LAN URL, a 6-digit PIN, and a QR code that bundles both.
+2. On the **phone**, open the LAN URL in Safari or Chrome (must be on the same Wi-Fi). The Connect screen appears.
+3. Enter the URL (pre-filled from the page you opened) and the PIN. Tap **Connect**.
+4. The phone exchanges the PIN for a long-lived token (stored in `localStorage`); subsequent requests use `Authorization: Bearer <token>`.
+5. Tap the iOS/Android share icon → **Add to Home Screen**. The web manifest gives you a full-screen, full-height install with the LocalMind icon.
+
+Notes:
+
+- The mobile UI is **chat-only** for now — model management, RAG, and image generation are desktop-side. The phone uses whichever model the host currently has loaded.
+- The PIN regenerates on every desktop start, so paired phones need to re-pair when you restart the desktop app. Tokens issued during a session stay valid until the app exits.
+- Communication is plain HTTP on the LAN. For sensitive use, treat the local network as the trust boundary.
+
+### Going fully native (Tauri Mobile)
+
+The PWA covers most of what a native app would. When you want a real iOS/Android binary (TestFlight, sideload, Play Store), Tauri 2 supports it from the same source tree:
+
+```bash
+npm run tauri ios init      # requires Xcode
+npm run tauri android init  # requires Android Studio + JDK
+
+npm run tauri ios dev
+npm run tauri android dev
+```
+
+The mobile build will hit the `Connect` screen on first launch — same flow as the PWA.
 
 ## Project layout
 

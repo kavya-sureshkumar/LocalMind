@@ -1,0 +1,58 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Match the app's gradient-accent: linear-gradient(135deg, #7c5cff 0%, #4c7dff 100%) -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7c5cff"/>
+      <stop offset="100%" stop-color="#4c7dff"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.28" cy="0.22" r="0.75">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.32"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="vignette" cx="0.5" cy="0.55" r="0.85">
+      <stop offset="55%" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.18"/>
+    </radialGradient>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="8"/>
+      <feOffset dx="0" dy="6" result="offsetblur"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Rounded background with sheen + subtle vignette -->
+  <rect width="1024" height="1024" rx="232" ry="232" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="232" ry="232" fill="url(#sheen)"/>
+  <rect width="1024" height="1024" rx="232" ry="232" fill="url(#vignette)"/>
+
+  <!-- Foreground glyph: a compact neural cluster.
+       Center "mind" node + three satellites form an upward triangle, with
+       faint perimeter edges suggesting a small graph. Shadowed for depth. -->
+  <g filter="url(#softShadow)">
+    <!-- Faint perimeter edges between satellites -->
+    <g stroke="#ffffff" stroke-width="14" stroke-linecap="round" stroke-opacity="0.5" fill="none">
+      <line x1="512" y1="232" x2="754" y2="652"/>
+      <line x1="754" y1="652" x2="270" y2="652"/>
+      <line x1="270" y1="652" x2="512" y2="232"/>
+    </g>
+    <!-- Bold spokes from center -->
+    <g stroke="#ffffff" stroke-width="34" stroke-linecap="round">
+      <line x1="512" y1="512" x2="512" y2="232"/>
+      <line x1="512" y1="512" x2="754" y2="652"/>
+      <line x1="512" y1="512" x2="270" y2="652"/>
+    </g>
+    <!-- Satellite nodes -->
+    <g fill="#ffffff">
+      <circle cx="512" cy="232" r="80"/>
+      <circle cx="754" cy="652" r="80"/>
+      <circle cx="270" cy="652" r="80"/>
+    </g>
+    <!-- Central node, slightly larger with an inner accent dot for depth -->
+    <circle cx="512" cy="512" r="152" fill="#ffffff"/>
+    <circle cx="512" cy="512" r="62" fill="#5b6dff" opacity="0.55"/>
+  </g>
+</svg>

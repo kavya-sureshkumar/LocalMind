@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowUp, Square, Loader2, Boxes, ImagePlus, Mic, MicOff, Volume2, BookOpen, X,
+  ArrowUp, Square, Loader2, Boxes, ImagePlus, Mic, MicOff, Volume2, BookOpen, X, Menu,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,15 +9,18 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useApp, registerChatRequest, unregisterChatRequest } from "../lib/store";
 import { api, streamChat, type ChatTurn, type ChatContentPart } from "../lib/api";
 import type { ChatMessage, RetrievedChunk } from "../lib/types";
-import { cn, uid } from "../lib/util";
+import { cn, isTauri, uid } from "../lib/util";
 import { createRecognition, speak, stopSpeaking, ttsSupported } from "../lib/voice";
 
-export function Chat() {
+export function Chat({ onOpenMenu }: { onOpenMenu?: () => void } = {}) {
   const {
     conversations, activeConvId, createConversation, updateConversation, renameConversation,
     activeModelId, setActiveModelId, installed, llama, setLlama, setView,
     ragDocs, setRagDocs, toggleRagDoc,
   } = useApp();
+  const remote = !isTauri();
+  // On the phone we don't pick a model — we use whatever the host has loaded.
+  const effectiveModelId = remote ? (llama.modelId ?? null) : activeModelId;
 
   const [input, setInput] = useState("");
   const [pendingImages, setPendingImages] = useState<string[]>([]);
@@ -35,28 +38,38 @@ export function Chat() {
   );
 
   const activeModel = useMemo(
-    () => installed.find((m) => m.id === activeModelId) ?? null,
-    [installed, activeModelId],
+    () => installed.find((m) => m.id === effectiveModelId) ?? null,
+    [installed, effectiveModelId],
   );
-  const isVision = activeModel?.kind === "vision";
+  // Remote/PWA = chat-only for now; image attach is desktop-side.
+  const isVision = !remote && activeModel?.kind === "vision";
 
   useEffect(() => {
     if (!activeConvId && conversations.length === 0) {
-      createConversation(activeModelId);
+      createConversation(effectiveModelId);
     } else if (!activeConvId && conversations[0]) {
       useApp.getState().setActiveConv(conversations[0].id);
     }
-  }, [activeConvId, conversations, activeModelId, createConversation]);
+  }, [activeConvId, conversations, effectiveModelId, createConversation]);
 
   useEffect(() => {
+    if (remote) return;
     api.ragList().then(setRagDocs).catch(() => {});
-  }, [setRagDocs]);
+  }, [remote, setRagDocs]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [conv?.messages.length, conv?.messages[conv.messages.length - 1]?.content]);
 
   async function ensureRunning(modelId: string) {
+    // On the phone we can't spawn llama-server — surface a clear error if the
+    // host hasn't loaded a model yet. Status is polled on a 5s tick.
+    if (remote) {
+      if (!llama.running) {
+        throw new Error("No model is loaded on the host. Open LocalMind on your computer and start a model first.");
+      }
+      return;
+    }
     const model = installed.find((m) => m.id === modelId);
     const wantMmproj = model?.kind === "vision" ? guessMmprojId(model, installed) : undefined;
     if (llama.running && llama.modelId === modelId && (llama.mmprojId ?? undefined) === wantMmproj) {
@@ -108,9 +121,9 @@ export function Chat() {
 
   async function send() {
     if ((!input.trim() && pendingImages.length === 0) || sending) return;
-    if (!activeModelId || !conv) return;
+    if (!effectiveModelId || !conv) return;
 
-    if (pendingImages.length > 0 && isVision) {
+    if (!remote && pendingImages.length > 0 && isVision) {
       const hasMmproj = installed.some((m) => m.kind === "mmproj" || /mmproj/i.test(m.id));
       if (!hasMmproj) {
         alert(
@@ -149,7 +162,7 @@ export function Chat() {
 
     try {
       let retrieved: RetrievedChunk[] = [];
-      if (conv.ragDocIds.length > 0 && llama.embeddingRunning && queryText) {
+      if (!remote && conv.ragDocIds.length > 0 && llama.embeddingRunning && queryText) {
         try {
           retrieved = await api.ragSearch(queryText, 5, conv.ragDocIds);
         } catch (e) {
@@ -157,7 +170,7 @@ export function Chat() {
         }
       }
 
-      await ensureRunning(activeModelId);
+      await ensureRunning(effectiveModelId);
       const port = useApp.getState().llama.port;
 
       const systemPrompt = buildSystemPrompt(retrieved);
@@ -176,7 +189,7 @@ export function Chat() {
 
       try {
         let acc = "";
-        for await (const delta of streamChat(port, activeModelId, turns, { signal: controller.signal })) {
+        for await (const delta of streamChat(port, effectiveModelId, turns, { signal: controller.signal })) {
           if (controller.signal.aborted) break;
           acc += delta;
           messagesInProgress = messagesInProgress.map((m) =>
@@ -217,32 +230,49 @@ export function Chat() {
 
   return (
     <div className="flex flex-col h-full">
-      <header className="flex items-center justify-between px-5 py-3 border-b border-[var(--color-border-soft)] relative">
-        <div className="flex items-center gap-3 min-w-0">
+      <header className="safe-top flex items-center justify-between px-5 py-3 border-b border-[var(--color-border-soft)] relative">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          {onOpenMenu && (
+            <button
+              onClick={onOpenMenu}
+              className="md:hidden text-[var(--color-text-muted)] hover:text-[var(--color-text)] -ml-1 p-1"
+              aria-label="Open menu"
+            >
+              <Menu size={18} />
+            </button>
+          )}
           <h1 className="font-semibold text-[15px] truncate">{conv?.title ?? "Chat"}</h1>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowSources((v) => !v)}
-            className={cn(
-              "flex items-center gap-1.5 text-sm px-2.5 py-1.5 rounded-md border transition-colors",
-              selectedDocCount > 0
-                ? "border-[var(--color-accent)]/60 bg-[var(--color-accent)]/10 text-[var(--color-text)]"
-                : "border-[var(--color-border)] bg-[var(--color-panel-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]",
-            )}
-            title="Use documents as context (RAG)"
-          >
-            <BookOpen size={14} />
-            {selectedDocCount > 0 ? `Sources · ${selectedDocCount}` : "Sources"}
-          </button>
-          <ModelPicker
-            installed={installed}
-            activeModelId={activeModelId}
-            onPick={setActiveModelId}
-            onGoMarketplace={() => setView("marketplace")}
-          />
+          {!remote && (
+            <button
+              onClick={() => setShowSources((v) => !v)}
+              className={cn(
+                "flex items-center gap-1.5 text-sm px-2.5 py-1.5 rounded-md border transition-colors",
+                selectedDocCount > 0
+                  ? "border-[var(--color-accent)]/60 bg-[var(--color-accent)]/10 text-[var(--color-text)]"
+                  : "border-[var(--color-border)] bg-[var(--color-panel-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]",
+              )}
+              title="Use documents as context (RAG)"
+            >
+              <BookOpen size={14} />
+              {selectedDocCount > 0 ? `Sources · ${selectedDocCount}` : "Sources"}
+            </button>
+          )}
+          {remote ? (
+            <span className="text-xs text-[var(--color-text-muted)] bg-[var(--color-panel-2)] rounded-md px-2.5 py-1 truncate max-w-[200px]" title={llama.modelId ?? undefined}>
+              {llama.modelId ? `via ${llama.modelId}` : "no model loaded on host"}
+            </span>
+          ) : (
+            <ModelPicker
+              installed={installed}
+              activeModelId={activeModelId}
+              onPick={setActiveModelId}
+              onGoMarketplace={() => setView("marketplace")}
+            />
+          )}
         </div>
-        {showSources && conv && (
+        {!remote && showSources && conv && (
           <SourcesPanel
             docs={ragDocs}
             selected={conv.ragDocIds}
@@ -256,7 +286,7 @@ export function Chat() {
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {(!conv || conv.messages.length === 0) ? (
-          <EmptyState hasModel={!!activeModelId} onGoMarketplace={() => setView("marketplace")} />
+          <EmptyState hasModel={!!effectiveModelId} onGoMarketplace={() => setView("marketplace")} remote={remote} />
         ) : (
           <div className="max-w-3xl mx-auto px-5 py-8 flex flex-col gap-6">
             {conv.messages.map((m) => (
@@ -266,7 +296,7 @@ export function Chat() {
         )}
       </div>
 
-      <footer className="px-5 py-4 border-t border-[var(--color-border-soft)]">
+      <footer className="safe-bottom px-5 py-4 border-t border-[var(--color-border-soft)]">
         <div className="max-w-3xl mx-auto">
           {pendingImages.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-2">
@@ -311,9 +341,9 @@ export function Chat() {
                 }
               }}
               rows={1}
-              placeholder={activeModelId ? "Message your model…" : "Pick a model to start"}
+              placeholder={effectiveModelId ? "Message your model…" : remote ? "Load a model on the desktop first" : "Pick a model to start"}
               className="flex-1 resize-none bg-transparent px-3 py-3 outline-none text-sm max-h-48"
-              disabled={!activeModelId}
+              disabled={!effectiveModelId}
             />
             <button
               onClick={startRecording}
@@ -327,7 +357,7 @@ export function Chat() {
             </button>
             <button
               onClick={sending ? stop : send}
-              disabled={!activeModelId || (!sending && !input.trim() && pendingImages.length === 0)}
+              disabled={!effectiveModelId || (!sending && !input.trim() && pendingImages.length === 0)}
               className={cn(
                 "m-1.5 w-9 h-9 rounded-xl grid place-items-center transition-colors",
                 sending
@@ -591,7 +621,9 @@ function ModelPicker({
   );
 }
 
-function EmptyState({ hasModel, onGoMarketplace }: { hasModel: boolean; onGoMarketplace: () => void }) {
+function EmptyState({
+  hasModel, onGoMarketplace, remote,
+}: { hasModel: boolean; onGoMarketplace: () => void; remote: boolean }) {
   return (
     <div className="h-full flex flex-col items-center justify-center text-center px-6">
       <div className="w-14 h-14 rounded-2xl gradient-accent grid place-items-center mb-4">
@@ -599,15 +631,20 @@ function EmptyState({ hasModel, onGoMarketplace }: { hasModel: boolean; onGoMark
       </div>
       <h2 className="text-xl font-semibold mb-1">Welcome to LocalMind</h2>
       <p className="text-[var(--color-text-muted)] max-w-md mb-5 text-sm">
-        Run open-source language models entirely on your device. Private, offline, fast.
+        {remote
+          ? "You're connected. Chat will use the model loaded on your computer."
+          : "Run open-source language models entirely on your device. Private, offline, fast."}
       </p>
-      {!hasModel && (
+      {!hasModel && !remote && (
         <button
           onClick={onGoMarketplace}
           className="px-4 py-2 rounded-md gradient-accent text-white text-sm font-medium"
         >
           Browse models →
         </button>
+      )}
+      {!hasModel && remote && (
+        <p className="text-sm text-[var(--color-text-muted)]">Open LocalMind on your computer and start a model.</p>
       )}
       {hasModel && <p className="text-sm text-[var(--color-text-muted)]">Ask anything to get started.</p>}
     </div>

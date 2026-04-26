@@ -11,7 +11,8 @@ use llama::{LlamaSettings, LlamaState, LlamaStatus};
 use models::{InstalledModel, ModelKind, ModelListing};
 use rag::{Document, RagState, RetrievedChunk};
 use sd::{SdImage, SdRequest, SdState};
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 struct AppStateHolder {
@@ -19,6 +20,9 @@ struct AppStateHolder {
     rag: Arc<RagState>,
     sd: Arc<SdState>,
     lan_url: parking_lot_lite::Once<String>,
+    pin: String,
+    #[allow(dead_code)]
+    tokens: Arc<Mutex<HashSet<String>>>,
 }
 
 mod parking_lot_lite {
@@ -115,6 +119,11 @@ fn get_lan_url(state: State<'_, Arc<AppStateHolder>>) -> Option<String> {
 }
 
 #[tauri::command]
+fn get_lan_pin(state: State<'_, Arc<AppStateHolder>>) -> String {
+    state.pin.clone()
+}
+
+#[tauri::command]
 async fn ensure_engine(app: AppHandle) -> Result<String, String> {
     binaries::ensure_llama_server(&app)
         .await
@@ -193,16 +202,25 @@ async fn ensure_sd(app: AppHandle) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+fn generate_pin() -> String {
+    let raw = uuid::Uuid::new_v4().as_u128();
+    format!("{:06}", (raw % 1_000_000) as u32)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let llama = LlamaState::new();
     let rag = RagState::new();
     let sd = SdState::new();
+    let pin = generate_pin();
+    let tokens = Arc::new(Mutex::new(HashSet::new()));
     let holder = Arc::new(AppStateHolder {
         llama: llama.clone(),
         rag: rag.clone(),
         sd: sd.clone(),
         lan_url: parking_lot_lite::Once::new(),
+        pin: pin.clone(),
+        tokens: tokens.clone(),
     });
 
     tauri::Builder::default()
@@ -216,10 +234,12 @@ pub fn run() {
             let handle = app.handle().clone();
             let holder2 = holder.clone();
             let llama2 = llama.clone();
+            let pin2 = pin.clone();
+            let tokens2 = tokens.clone();
             tauri::async_runtime::spawn(async move {
                 let resource_dir = handle.path().resource_dir().ok();
                 let static_dir = resource_dir.map(|d| d.join("dist")).filter(|p| p.exists());
-                match server::start_lan_server(llama2, static_dir, 3939).await {
+                match server::start_lan_server(llama2, static_dir, 3939, pin2, tokens2).await {
                     Ok(url) => {
                         holder2.lan_url.set(url.clone());
                         let _ = handle.emit("lan:ready", url);
@@ -243,6 +263,7 @@ pub fn run() {
             start_embedding_server,
             stop_embedding_server,
             get_lan_url,
+            get_lan_pin,
             ensure_engine,
             rag_list,
             rag_delete,

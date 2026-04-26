@@ -2,46 +2,80 @@ use crate::llama::LlamaState;
 use anyhow::Result;
 use axum::{
     body::Body,
-    extract::State,
-    http::{HeaderMap, Request, StatusCode},
-    response::{IntoResponse, Response},
-    routing::{any, get},
-    Json, Router,
+    extract::{Request, State},
+    http::{HeaderMap, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Json, Response},
+    routing::{any, get, post},
+    Router,
 };
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tower_http::{cors::CorsLayer, services::ServeDir};
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AppState {
     pub llama: Arc<LlamaState>,
     pub http: reqwest::Client,
+    pub pin: String,
+    pub tokens: Arc<Mutex<HashSet<String>>>,
+}
+
+#[derive(Deserialize)]
+struct PairRequest {
+    pin: String,
+}
+
+#[derive(Serialize)]
+struct PairResponse {
+    token: String,
 }
 
 pub async fn start_lan_server(
     llama: Arc<LlamaState>,
     static_dir: Option<PathBuf>,
     port: u16,
+    pin: String,
+    tokens: Arc<Mutex<HashSet<String>>>,
 ) -> Result<String> {
     let state = AppState {
         llama,
         http: reqwest::Client::new(),
+        pin,
+        tokens,
     };
 
     let mut app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/pair", post(pair))
         .route("/api/status", get(status))
         .route("/v1/*rest", any(proxy_v1))
         .route("/health", get(proxy_health))
+        // Vite's HMR client polls this when its WebSocket drops; on a 200 it
+        // calls `location.reload()`. Our proxy can't carry WebSockets, so the
+        // socket is permanently down — we must keep returning a non-success
+        // here or the phone reload-loops.
+        .route("/__vite_ping", get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "no-hmr") }))
         .nest_service("/sd-images", ServeDir::new(crate::config::sd_output_dir()));
 
     if let Some(dir) = static_dir {
+        // Production / packaged bundle: serve the prebuilt React app from disk.
         app = app.fallback_service(ServeDir::new(dir).append_index_html_on_directories(true));
     } else {
-        app = app.fallback(get(|| async { "LocalMind API" }));
+        // Dev mode (no `dist/`): forward unknown paths to the running Vite dev
+        // server so a phone hitting :3939 still loads the React app. HMR
+        // websockets won't survive the proxy, but the page renders and chat
+        // works end-to-end.
+        app = app.fallback(any(proxy_dev_frontend));
     }
 
-    let app = app.layer(CorsLayer::permissive()).with_state(state);
+    let app = app
+        .layer(middleware::from_fn_with_state(state.clone(), auth))
+        .layer(CorsLayer::permissive())
+        .with_state(state);
 
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -62,8 +96,51 @@ pub async fn start_lan_server(
     Ok(url)
 }
 
+// Endpoints that don't require a Bearer token: discovery + pairing + static assets.
+fn is_public_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/health" | "/api/health" | "/api/pair" | "/manifest.webmanifest"
+    ) || (!path.starts_with("/api")
+        && !path.starts_with("/v1")
+        && !path.starts_with("/sd-images"))
+}
+
+async fn auth(State(s): State<AppState>, request: Request, next: Next) -> Response {
+    let path = request.uri().path().to_string();
+    if is_public_path(&path) {
+        return next.run(request).await;
+    }
+    let token = request
+        .headers()
+        .get("authorization")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer ").map(str::to_string));
+    let ok = match token {
+        Some(t) => s.tokens.lock().unwrap().contains(&t),
+        None => false,
+    };
+    if ok {
+        next.run(request).await
+    } else {
+        (StatusCode::UNAUTHORIZED, "pair with the PIN shown on the desktop app").into_response()
+    }
+}
+
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "ok": true, "service": "LocalMind" }))
+}
+
+async fn pair(
+    State(s): State<AppState>,
+    Json(req): Json<PairRequest>,
+) -> Result<Json<PairResponse>, (StatusCode, &'static str)> {
+    if req.pin.trim() != s.pin {
+        return Err((StatusCode::UNAUTHORIZED, "wrong PIN"));
+    }
+    let token = Uuid::new_v4().to_string();
+    s.tokens.lock().unwrap().insert(token.clone());
+    Ok(Json(PairResponse { token }))
 }
 
 async fn status(State(s): State<AppState>) -> Json<serde_json::Value> {
@@ -74,14 +151,38 @@ async fn status(State(s): State<AppState>) -> Json<serde_json::Value> {
 async fn proxy_health(State(s): State<AppState>) -> Response {
     let port = s.llama.status().await.port;
     let url = format!("http://127.0.0.1:{}/health", port);
-    forward(&s.http, &url, Request::builder().uri("/").body(Body::empty()).unwrap()).await
+    forward(
+        &s.http,
+        &url,
+        Request::builder().uri("/").body(Body::empty()).unwrap(),
+    )
+    .await
+}
+
+async fn proxy_dev_frontend(State(s): State<AppState>, req: Request<Body>) -> Response {
+    // We can't carry WebSocket frames through reqwest. If we forward an
+    // Upgrade request to Vite, Vite returns 101 Switching Protocols and we
+    // pipe that back to the browser — the browser then thinks the WebSocket
+    // opened, fires `open`, and Vite's ping logic calls location.reload().
+    // Refusing the upgrade outright makes the ping `error` and the page stays
+    // put. (Cost: no HMR over the LAN proxy, which we don't carry anyway.)
+    if req.headers().get(axum::http::header::UPGRADE).is_some() {
+        return (StatusCode::NOT_FOUND, "websocket not proxied").into_response();
+    }
+    // Forward to the Vite dev server on the desktop. This only runs in dev
+    // (when no bundled `dist/` exists), so hard-coding the localhost URL is OK.
+    let path = req.uri().path().to_string();
+    let qs = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
+    let url = format!("http://127.0.0.1:1420{}{}", path, qs);
+    forward(&s.http, &url, req).await
 }
 
 async fn proxy_v1(State(s): State<AppState>, req: Request<Body>) -> Response {
-    let port = s.llama.status().await.port;
-    if !s.llama.status().await.running {
-        return (StatusCode::SERVICE_UNAVAILABLE, "no model loaded").into_response();
+    let st = s.llama.status().await;
+    if !st.running {
+        return (StatusCode::SERVICE_UNAVAILABLE, "no model loaded on host").into_response();
     }
+    let port = st.port;
     let path = req.uri().path().to_string();
     let qs = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
     let url = format!("http://127.0.0.1:{}{}{}", port, path, qs);
@@ -98,7 +199,9 @@ async fn forward(client: &reqwest::Client, url: &str, req: Request<Body>) -> Res
 
     let mut builder = client.request(method, url);
     for (k, v) in headers.iter() {
-        if k == "host" || k == "content-length" { continue; }
+        if k == "host" || k == "content-length" || k == "authorization" {
+            continue;
+        }
         builder = builder.header(k, v);
     }
     builder = builder.body(body_bytes.to_vec());

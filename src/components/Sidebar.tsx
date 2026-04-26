@@ -1,33 +1,76 @@
-import { MessageSquare, Store, Boxes, BookOpen, Image as ImageIcon, Settings as SettingsIcon, Plus, Trash2 } from "lucide-react";
+import { MessageSquare, Store, Boxes, BookOpen, Image as ImageIcon, Settings as SettingsIcon, Plus, Trash2, X } from "lucide-react";
 import { useApp } from "../lib/store";
 import { HardwareBadge } from "./HardwareBadge";
 import { cn } from "../lib/util";
 
-export function Sidebar() {
+export function Sidebar({
+  remote = false,
+  open = true,
+  onClose,
+}: {
+  remote?: boolean;
+  /** Whether the sidebar is visible (used for the mobile slide-over). */
+  open?: boolean;
+  /** Called when the user dismisses the mobile overlay. */
+  onClose?: () => void;
+}) {
   const {
     view, setView, hardware, conversations, activeConvId, setActiveConv,
     createConversation, deleteConversation, activeModelId, llama,
   } = useApp();
 
+  // On md+ screens the sidebar is always part of the flex row. On small
+  // screens it's a slide-over that overlays the chat when `open` is true.
+  const onPick = (cb: () => void) => () => { cb(); onClose?.(); };
+
   return (
-    <aside className="w-[260px] shrink-0 h-full flex flex-col border-r border-[var(--color-border-soft)] bg-[var(--color-panel)]">
-      <div className="px-4 pt-4 pb-3 flex items-center gap-2">
+    <>
+      {/* Mobile backdrop */}
+      <div
+        onClick={onClose}
+        className={cn(
+          "md:hidden fixed inset-0 z-40 bg-black/50 transition-opacity",
+          open ? "opacity-100" : "opacity-0 pointer-events-none",
+        )}
+      />
+      <aside
+        className={cn(
+          "z-50 h-full flex flex-col border-r border-[var(--color-border-soft)] bg-[var(--color-panel)] transition-transform",
+          // Mobile: fixed overlay, slides in from the left
+          "fixed top-0 left-0 w-[280px] max-w-[85vw]",
+          open ? "translate-x-0" : "-translate-x-full",
+          // md+: in-flow, always visible, narrower
+          "md:static md:translate-x-0 md:w-[260px] md:max-w-none md:shrink-0",
+        )}
+      >
+      <div className="safe-top px-4 pt-4 pb-3 flex items-center gap-2">
         <div className="w-8 h-8 rounded-lg gradient-accent grid place-items-center">
           <span className="text-white font-bold text-sm">L</span>
         </div>
-        <div className="flex flex-col">
+        <div className="flex flex-col flex-1">
           <span className="font-semibold text-sm leading-tight">LocalMind</span>
-          <span className="text-[10px] text-[var(--color-text-subtle)] leading-tight">v0.1 · local only</span>
+          <span className="text-[10px] text-[var(--color-text-subtle)] leading-tight">
+            {remote ? "v0.1 · paired device" : "v0.1 · local only"}
+          </span>
         </div>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="md:hidden text-[var(--color-text-muted)] hover:text-[var(--color-text)] p-1"
+            aria-label="Close menu"
+          >
+            <X size={16} />
+          </button>
+        )}
       </div>
 
       <nav className="px-2 py-1 flex flex-col gap-0.5">
-        <NavItem icon={<MessageSquare size={15} />} label="Chat" active={view === "chat"} onClick={() => setView("chat")} />
-        <NavItem icon={<Store size={15} />} label="Marketplace" active={view === "marketplace"} onClick={() => setView("marketplace")} />
-        <NavItem icon={<Boxes size={15} />} label="My models" active={view === "models"} onClick={() => setView("models")} />
-        <NavItem icon={<BookOpen size={15} />} label="Knowledge" active={view === "knowledge"} onClick={() => setView("knowledge")} />
-        <NavItem icon={<ImageIcon size={15} />} label="Images" active={view === "image"} onClick={() => setView("image")} />
-        <NavItem icon={<SettingsIcon size={15} />} label="Settings" active={view === "settings"} onClick={() => setView("settings")} />
+        <NavItem icon={<MessageSquare size={15} />} label="Chat" active={view === "chat"} onClick={onPick(() => setView("chat"))} />
+        {!remote && <NavItem icon={<Store size={15} />} label="Marketplace" active={view === "marketplace"} onClick={onPick(() => setView("marketplace"))} />}
+        {!remote && <NavItem icon={<Boxes size={15} />} label="My models" active={view === "models"} onClick={onPick(() => setView("models"))} />}
+        {!remote && <NavItem icon={<BookOpen size={15} />} label="Knowledge" active={view === "knowledge"} onClick={onPick(() => setView("knowledge"))} />}
+        {!remote && <NavItem icon={<ImageIcon size={15} />} label="Images" active={view === "image"} onClick={onPick(() => setView("image"))} />}
+        <NavItem icon={<SettingsIcon size={15} />} label="Settings" active={view === "settings"} onClick={onPick(() => setView("settings"))} />
       </nav>
 
       {view === "chat" && (
@@ -73,15 +116,16 @@ export function Sidebar() {
       {view !== "chat" && <div className="flex-1" />}
 
       <div className="px-3 py-3 border-t border-[var(--color-border-soft)] flex flex-col gap-2">
-        <HardwareBadge hw={hardware} />
+        {!remote && <HardwareBadge hw={hardware} />}
         <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
           <span className={cn("w-1.5 h-1.5 rounded-full", llama.running ? "bg-[var(--color-success)]" : "bg-[var(--color-text-subtle)]")} />
           <span className="truncate">
-            {llama.running ? `Running: ${llama.modelId ?? "model"}` : "Idle"}
+            {llama.running ? `${remote ? "Host running: " : "Running: "}${llama.modelId ?? "model"}` : remote ? "Host idle — load a model on the desktop" : "Idle"}
           </span>
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 

@@ -1,4 +1,5 @@
 import { isTauri } from "./util";
+import { useApp } from "./store";
 import type {
   HardwareInfo,
   InstalledModel,
@@ -10,6 +11,49 @@ import type {
   SdImage,
   SdRequest,
 } from "./types";
+
+function connection() {
+  return useApp.getState().connection;
+}
+
+function authHeaders(): Record<string, string> {
+  const c = connection();
+  return c ? { Authorization: `Bearer ${c.token}` } : {};
+}
+
+export async function pairWithServer(url: string, pin: string): Promise<{ token: string }> {
+  const base = url.replace(/\/+$/, "");
+  const res = await fetch(`${base}/api/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pin }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `pair failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function probeServer(url: string): Promise<boolean> {
+  try {
+    const base = url.replace(/\/+$/, "");
+    const res = await fetch(`${base}/health`, { method: "GET" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function remoteStatus(): Promise<LlamaStatus> {
+  const c = connection();
+  if (!c) throw new Error("not connected");
+  const res = await fetch(`${c.url.replace(/\/+$/, "")}/api/status`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`status failed: ${res.status}`);
+  return res.json();
+}
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (isTauri()) {
@@ -60,6 +104,7 @@ export const api = {
   sdGenerate: (request: SdRequest) => invoke<SdImage>("sd_generate", { request }),
   sdBusy: () => invoke<boolean>("sd_busy"),
   ensureSd: () => invoke<string>("ensure_sd"),
+  getLanPin: () => invoke<string>("get_lan_pin"),
 };
 
 export type ChatContentPart =
@@ -77,10 +122,15 @@ export async function* streamChat(
   messages: ChatTurn[],
   opts: { temperature?: number; maxTokens?: number; signal?: AbortSignal } = {},
 ): AsyncGenerator<string> {
-  const base = isTauri() ? `http://127.0.0.1:${port}` : "";
+  const conn = connection();
+  const base = conn
+    ? conn.url.replace(/\/+$/, "")
+    : isTauri()
+    ? `http://127.0.0.1:${port}`
+    : "";
   const res = await fetch(`${base}/v1/chat/completions`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...authHeaders() },
     signal: opts.signal,
     body: JSON.stringify({
       model: modelId,

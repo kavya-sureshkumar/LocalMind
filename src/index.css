@@ -30,6 +30,23 @@ html, body, #root {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* iOS PWA: with viewport-fit=cover + black-translucent status bar, the layout
+   viewport extends behind the notch and home indicator. Without these
+   variables set, content (especially the chat header and input) gets hidden
+   under the system UI and the screen looks blank. */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+@supports (-webkit-touch-callout: none) {
+  /* Use the visual viewport on iOS so 100vh doesn't include the notch area */
+  html, body, #root { height: 100dvh; }
+}
+.safe-top { padding-top: max(env(safe-area-inset-top), 0px); }
+.safe-bottom { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
+
 * { box-sizing: border-box; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }

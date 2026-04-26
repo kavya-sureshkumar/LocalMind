@@ -19,6 +19,15 @@ export default defineConfig(async () => ({
           port: 1421,
         }
       : undefined,
+    // In dev, proxy the same-origin API endpoints to the Axum LAN server so
+    // the phone can hit Vite (1420) for both the React app and `/api`/`/v1`
+    // calls. Removes the need to type two different URLs into the phone.
+    proxy: {
+      "/api": { target: "http://127.0.0.1:3939", changeOrigin: true },
+      "/v1": { target: "http://127.0.0.1:3939", changeOrigin: true },
+      "/health": { target: "http://127.0.0.1:3939", changeOrigin: true },
+      "/sd-images": { target: "http://127.0.0.1:3939", changeOrigin: true },
+    },
     watch: {
       ignored: ["**/src-tauri/**"],
     },

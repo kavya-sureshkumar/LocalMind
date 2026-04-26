@@ -76,6 +76,11 @@ interface AppState {
 
   engineProgress: { stage: string; message: string; percent: number } | null;
   setEngineProgress: (p: AppState["engineProgress"]) => void;
+
+  // Set on the phone/PWA: the desktop's LAN URL plus a paired bearer token.
+  // null on desktop (Tauri) — desktop talks to its own backend via invoke().
+  connection: { url: string; token: string } | null;
+  setConnection: (c: { url: string; token: string } | null) => void;
 }
 
 const emptyLlama: LlamaStatus = {
@@ -186,6 +191,9 @@ export const useApp = create<AppState>()(
 
       engineProgress: null,
       setEngineProgress: (p) => set({ engineProgress: p }),
+
+      connection: null,
+      setConnection: (c) => set({ connection: c }),
     }),
     {
       name: "localmind-store",
@@ -197,6 +205,7 @@ export const useApp = create<AppState>()(
         activeEmbeddingModelId: s.activeEmbeddingModelId,
         activeSdModelId: s.activeSdModelId,
         sdImages: s.sdImages,
+        connection: s.connection,
       }),
     },
   ),
