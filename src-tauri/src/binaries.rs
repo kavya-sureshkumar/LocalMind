@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
 #[derive(Clone, Serialize)]
@@ -197,7 +197,7 @@ fn pick_llama_asset<'a>(
         .max_by_key(|a| a["name"].as_str().unwrap_or("").to_string())
 }
 
-fn flatten_binary(dest: &PathBuf, _target_name: &str) -> Result<()> {
+fn flatten_binary(dest: &Path, _target_name: &str) -> Result<()> {
     // Recursively lift every file and symlink from any subdirectory of `dest`
     // up to `dest` itself. Archives may put the binary and its shared libraries
     // in different subdirectories (e.g. build/bin and build/src), so only moving
@@ -223,7 +223,7 @@ fn flatten_binary(dest: &PathBuf, _target_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn lift_all(src: &PathBuf, dest: &PathBuf) -> Result<()> {
+fn lift_all(src: &Path, dest: &Path) -> Result<()> {
     let entries: Vec<_> = std::fs::read_dir(src)
         .map(|it| it.flatten().collect())
         .unwrap_or_else(|_| Vec::new());
@@ -250,7 +250,7 @@ fn lift_all(src: &PathBuf, dest: &PathBuf) -> Result<()> {
             let _ = std::fs::remove_file(&path);
             continue;
         }
-        if let Err(_) = std::fs::rename(&path, &to) {
+        if std::fs::rename(&path, &to).is_err() {
             // Fallback: copy (handles cross-filesystem) — rename preserves symlinks already.
             if meta.file_type().is_symlink() {
                 #[cfg(unix)]
@@ -267,7 +267,7 @@ fn lift_all(src: &PathBuf, dest: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn remove_empty_tree(dir: &PathBuf) -> Result<()> {
+fn remove_empty_tree(dir: &Path) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -430,7 +430,7 @@ fn sd_asset_keywords(hw: &hardware::HardwareInfo) -> Vec<&'static str> {
     }
 }
 
-fn extract_tar_gz(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
+fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<()> {
     // Minimal tar.gz extraction without extra deps — shell out to system tar
     let status = std::process::Command::new("tar")
         .arg("-xzf")
@@ -447,7 +447,7 @@ fn extract_tar_gz(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn extract_zip(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
+fn extract_zip(archive: &Path, dest: &Path) -> Result<()> {
     let file = std::fs::File::open(archive)?;
     let mut zip = zip::ZipArchive::new(file)?;
 

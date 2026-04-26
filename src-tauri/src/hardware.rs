@@ -73,6 +73,7 @@ pub fn detect() -> HardwareInfo {
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn detect_accelerator(total_mem_gb: f64) -> Accelerator {
     #[cfg(target_os = "macos")]
     if std::env::consts::ARCH == "aarch64" {
