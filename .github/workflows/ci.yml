@@ -71,18 +71,3 @@ jobs:
         working-directory: src-tauri
         run: cargo check --all-targets
 
-  # ── Summary gate (branch protection target) ─────────────────────────────────
-  ci:
-    name: CI
-    needs: [frontend, backend]
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: All checks passed
-        run: |
-          if [[ "${{ needs.frontend.result }}" != "success" || \
-                "${{ needs.backend.result }}"  != "success" ]]; then
-            echo "One or more jobs failed."
-            exit 1
-          fi
-          echo "All checks passed."
