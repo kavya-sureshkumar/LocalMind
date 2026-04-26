@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Cpu, Wifi, Smartphone, Copy, Check, KeyRound, LogOut, Network, Power } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Cpu, Wifi, Smartphone, Copy, Check, KeyRound, LogOut, Network, Power, Terminal, Trash2 } from "lucide-react";
 import QRCode from "qrcode";
 import { useApp } from "../lib/store";
 import { api } from "../lib/api";
@@ -24,6 +24,18 @@ export function Settings() {
   // save / on every keystroke to keep the persisted store in `string[]` form.
   const [workersText, setWorkersText] = useState(synapse.workers.join(", "));
 
+  // Synapse log panel: rolling buffer fed by `llama:log` (host's llama-server)
+  // and `synapse:log` (this machine's rpc-server when worker mode is on).
+  // We keep raw entries so the "Highlights" filter can be toggled without
+  // dropping lines, and bound the buffer at MAX_LOG_LINES to avoid leaking RAM
+  // over a long session.
+  const MAX_LOG_LINES = 400;
+  type LogEntry = { source: "llama" | "synapse"; stream: string; line: string; tag?: string };
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [highlightsOnly, setHighlightsOnly] = useState(true);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const logBoxRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (remote) return;
     listen<BinaryProgress>("binary:progress", (p) => setEngineProgress(p));
@@ -34,6 +46,44 @@ export function Settings() {
       .then((s) => setSynapseWorkerEnabled(s.running))
       .catch(() => {});
   }, [remote, setSynapseWorkerEnabled]);
+
+  // Subscribe to log streams from both llama-server and rpc-server. Both
+  // emitters live in Rust (`pipe_output` in llama.rs / synapse.rs) and emit
+  // structured JSON. The promise→fn dance is so we can `await` the unsubscribe
+  // when the component unmounts — `listen()` resolves to a fn, not an unsub.
+  useEffect(() => {
+    if (remote) return;
+    let pending: Array<() => void> = [];
+    let cancelled = false;
+
+    const append = (entry: LogEntry) => {
+      setLogs((prev) => {
+        const next = prev.concat(entry);
+        // O(1) trim at the head when we exceed the cap. We pay slice() instead
+        // of mutating in place because React needs a new reference to re-render.
+        return next.length > MAX_LOG_LINES ? next.slice(next.length - MAX_LOG_LINES) : next;
+      });
+    };
+
+    listen<{ stream: string; line: string; tag?: string }>("llama:log", (p) => {
+      append({ source: "llama", stream: p.stream, line: p.line, tag: p.tag });
+    }).then((un) => { if (cancelled) un(); else pending.push(un); });
+
+    listen<{ stream: string; line: string }>("synapse:log", (p) => {
+      append({ source: "synapse", stream: p.stream, line: p.line });
+    }).then((un) => { if (cancelled) un(); else pending.push(un); });
+
+    return () => {
+      cancelled = true;
+      pending.forEach((un) => un());
+    };
+  }, [remote]);
+
+  useEffect(() => {
+    if (autoScroll && logBoxRef.current) {
+      logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight;
+    }
+  }, [logs, autoScroll]);
 
   async function toggleWorker(next: boolean) {
     setWorkerBusy(true);
@@ -264,6 +314,90 @@ export function Settings() {
                 </div>
               )}
             </div>
+
+            {/* Live log panel — surfaces stdout/stderr from llama-server (host)
+                and rpc-server (worker) so users can confirm RPC is engaged.
+                "Highlights" filter narrows to lines mentioning RPC / offload /
+                buffer-size, which is what you actually want when debugging
+                whether layers landed on the worker. */}
+            <div className="mt-5">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Terminal size={13} className="text-[var(--color-text-muted)]" />
+                  Live logs
+                  <span className="text-xs text-[var(--color-text-subtle)] font-normal">
+                    ({logs.length}/{MAX_LOG_LINES})
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 text-xs text-[var(--color-text-muted)]">
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={highlightsOnly}
+                      onChange={(e) => setHighlightsOnly(e.target.checked)}
+                      className="accent-[var(--color-accent)]"
+                    />
+                    Highlights
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoScroll}
+                      onChange={(e) => setAutoScroll(e.target.checked)}
+                      className="accent-[var(--color-accent)]"
+                    />
+                    Auto-scroll
+                  </label>
+                  <button
+                    onClick={() => setLogs([])}
+                    className="flex items-center gap-1 hover:text-[var(--color-text)]"
+                    title="Clear logs"
+                  >
+                    <Trash2 size={12} />
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div
+                ref={logBoxRef}
+                className="font-mono text-[11px] leading-[1.45] bg-black/60 border border-[var(--color-border)] rounded-md p-2.5 h-[220px] overflow-y-auto"
+              >
+                {logs.length === 0 ? (
+                  <div className="text-[var(--color-text-subtle)] italic">
+                    Waiting for output… Load a model to see llama-server initialize, or start
+                    worker mode to see rpc-server output.
+                  </div>
+                ) : (
+                  logs
+                    .filter((l) => !highlightsOnly || isHighlight(l.line))
+                    .map((l, i) => (
+                      <div
+                        key={i}
+                        className={
+                          l.stream === "stderr"
+                            ? "text-[var(--color-text-muted)]"
+                            : "text-[var(--color-text)]"
+                        }
+                      >
+                        <span
+                          className={
+                            l.source === "synapse"
+                              ? "text-[var(--color-accent)]"
+                              : "text-[var(--color-success)]"
+                          }
+                        >
+                          [{l.source === "synapse" ? "rpc-server" : `llama-${l.tag ?? "server"}`}]
+                        </span>{" "}
+                        {l.line}
+                      </div>
+                    ))
+                )}
+              </div>
+              <div className="mt-1.5 text-[11px] text-[var(--color-text-subtle)]">
+                Highlights: lines mentioning <code>RPC</code>, <code>offload</code>,
+                <code> buffer size</code>, or errors — the signals that confirm a layer split actually happened.
+              </div>
+            </div>
           </Section>
         )}
       </div>
@@ -290,6 +424,15 @@ function Row({ k, v }: { k: string; v: string }) {
       <div className="text-right break-all">{v}</div>
     </div>
   );
+}
+
+// Pre-compiled regex for the "interesting" log lines that prove distributed
+// inference is actually engaged. Anything mentioning RPC backend registration,
+// the buffer-size table at load, layer offloading, or hard errors qualifies.
+const HIGHLIGHT_RE =
+  /\b(rpc|offload|buffer size|backend|n_layer|tensor split|error|failed|timeout)\b/i;
+function isHighlight(line: string): boolean {
+  return HIGHLIGHT_RE.test(line);
 }
 
 function describeAcc(a: any): string {
