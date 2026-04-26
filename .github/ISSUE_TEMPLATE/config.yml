@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a question / design discussion
+    url: https://github.com/suryakiransureshkumar/LocalMind/discussions
+    about: Not a bug or feature? Start a discussion instead.
