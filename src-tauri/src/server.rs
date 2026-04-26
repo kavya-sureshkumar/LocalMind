@@ -58,7 +58,10 @@ pub async fn start_lan_server(
         // calls `location.reload()`. Our proxy can't carry WebSockets, so the
         // socket is permanently down — we must keep returning a non-success
         // here or the phone reload-loops.
-        .route("/__vite_ping", get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "no-hmr") }))
+        .route(
+            "/__vite_ping",
+            get(|| async { (StatusCode::SERVICE_UNAVAILABLE, "no-hmr") }),
+        )
         .nest_service("/sd-images", ServeDir::new(crate::config::sd_output_dir()));
 
     if let Some(dir) = static_dir {
@@ -101,9 +104,7 @@ fn is_public_path(path: &str) -> bool {
     matches!(
         path,
         "/health" | "/api/health" | "/api/pair" | "/manifest.webmanifest"
-    ) || (!path.starts_with("/api")
-        && !path.starts_with("/v1")
-        && !path.starts_with("/sd-images"))
+    ) || (!path.starts_with("/api") && !path.starts_with("/v1") && !path.starts_with("/sd-images"))
 }
 
 async fn auth(State(s): State<AppState>, request: Request, next: Next) -> Response {
@@ -123,7 +124,11 @@ async fn auth(State(s): State<AppState>, request: Request, next: Next) -> Respon
     if ok {
         next.run(request).await
     } else {
-        (StatusCode::UNAUTHORIZED, "pair with the PIN shown on the desktop app").into_response()
+        (
+            StatusCode::UNAUTHORIZED,
+            "pair with the PIN shown on the desktop app",
+        )
+            .into_response()
     }
 }
 
@@ -172,7 +177,11 @@ async fn proxy_dev_frontend(State(s): State<AppState>, req: Request<Body>) -> Re
     // Forward to the Vite dev server on the desktop. This only runs in dev
     // (when no bundled `dist/` exists), so hard-coding the localhost URL is OK.
     let path = req.uri().path().to_string();
-    let qs = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
+    let qs = req
+        .uri()
+        .query()
+        .map(|q| format!("?{q}"))
+        .unwrap_or_default();
     let url = format!("http://127.0.0.1:1420{}{}", path, qs);
     forward(&s.http, &url, req).await
 }
@@ -184,7 +193,11 @@ async fn proxy_v1(State(s): State<AppState>, req: Request<Body>) -> Response {
     }
     let port = st.port;
     let path = req.uri().path().to_string();
-    let qs = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
+    let qs = req
+        .uri()
+        .query()
+        .map(|q| format!("?{q}"))
+        .unwrap_or_default();
     let url = format!("http://127.0.0.1:{}{}{}", port, path, qs);
     forward(&s.http, &url, req).await
 }

@@ -1,4 +1,7 @@
-use crate::{config, hardware::{self, Accelerator}};
+use crate::{
+    config,
+    hardware::{self, Accelerator},
+};
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -40,7 +43,13 @@ pub async fn ensure_llama_server(app: &AppHandle) -> Result<PathBuf> {
     let hw = hardware::detect();
     let keywords = llama_asset_keywords(&hw);
 
-    emit(app, "downloading", 0, 0, &format!("Fetching llama.cpp release info ({})", keywords.join("/")));
+    emit(
+        app,
+        "downloading",
+        0,
+        0,
+        &format!("Fetching llama.cpp release info ({})", keywords.join("/")),
+    );
 
     let client = reqwest::Client::builder()
         .user_agent("LocalMind/0.1")
@@ -58,16 +67,29 @@ pub async fn ensure_llama_server(app: &AppHandle) -> Result<PathBuf> {
         .as_array()
         .ok_or_else(|| anyhow!("no assets in release"))?;
 
-    let asset = pick_llama_asset(assets, &keywords)
-        .ok_or_else(|| anyhow!("no matching llama.cpp asset for platform (wanted: {:?})", keywords))?;
+    let asset = pick_llama_asset(assets, &keywords).ok_or_else(|| {
+        anyhow!(
+            "no matching llama.cpp asset for platform (wanted: {:?})",
+            keywords
+        )
+    })?;
 
     let url = asset["browser_download_url"]
         .as_str()
         .ok_or_else(|| anyhow!("missing download url"))?;
     let total = asset["size"].as_u64().unwrap_or(0);
-    let name = asset["name"].as_str().unwrap_or("llama-archive").to_string();
+    let name = asset["name"]
+        .as_str()
+        .unwrap_or("llama-archive")
+        .to_string();
 
-    emit(app, "downloading", 0, total, &format!("Downloading {}", name));
+    emit(
+        app,
+        "downloading",
+        0,
+        total,
+        &format!("Downloading {}", name),
+    );
 
     let mut response = client.get(url).send().await?.error_for_status()?;
     let mut downloaded: u64 = 0;
@@ -78,20 +100,39 @@ pub async fn ensure_llama_server(app: &AppHandle) -> Result<PathBuf> {
         file.write_all(&chunk).await?;
         downloaded += chunk.len() as u64;
         if downloaded % (1024 * 1024) < chunk.len() as u64 {
-            emit(app, "downloading", downloaded, total, "Downloading llama.cpp");
+            emit(
+                app,
+                "downloading",
+                downloaded,
+                total,
+                "Downloading llama.cpp",
+            );
         }
     }
     file.flush().await?;
     drop(file);
 
-    emit(app, "extracting", total, total, "Extracting llama.cpp binaries");
+    emit(
+        app,
+        "extracting",
+        total,
+        total,
+        "Extracting llama.cpp binaries",
+    );
 
     let target_dir = config::bin_dir();
     if name.ends_with(".zip") {
         extract_zip(&tmp, &target_dir)?;
     } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
         extract_tar_gz(&tmp, &target_dir)?;
-        flatten_binary(&target_dir, if cfg!(windows) { "llama-server.exe" } else { "llama-server" })?;
+        flatten_binary(
+            &target_dir,
+            if cfg!(windows) {
+                "llama-server.exe"
+            } else {
+                "llama-server"
+            },
+        )?;
     } else {
         return Err(anyhow!("unsupported archive format: {}", name));
     }
@@ -132,7 +173,10 @@ pub async fn ensure_llama_server(app: &AppHandle) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn pick_llama_asset<'a>(assets: &'a [serde_json::Value], keywords: &[&str]) -> Option<&'a serde_json::Value> {
+fn pick_llama_asset<'a>(
+    assets: &'a [serde_json::Value],
+    keywords: &[&str],
+) -> Option<&'a serde_json::Value> {
     // Prefer archives starting with "llama-" and matching all keywords, avoid "kleidiai" or "cudart-" variants.
     let is_archive = |n: &str| n.ends_with(".zip") || n.ends_with(".tar.gz") || n.ends_with(".tgz");
     let candidates: Vec<&serde_json::Value> = assets
@@ -148,9 +192,9 @@ fn pick_llama_asset<'a>(assets: &'a [serde_json::Value], keywords: &[&str]) -> O
         .collect();
 
     // If multiple matches (e.g., cuda-12.4 vs cuda-13.1), prefer the highest version number suffix.
-    candidates.into_iter().max_by_key(|a| {
-        a["name"].as_str().unwrap_or("").to_string()
-    })
+    candidates
+        .into_iter()
+        .max_by_key(|a| a["name"].as_str().unwrap_or("").to_string())
 }
 
 fn flatten_binary(dest: &PathBuf, _target_name: &str) -> Result<()> {
@@ -249,7 +293,13 @@ pub async fn ensure_sd(app: &AppHandle) -> Result<PathBuf> {
     let hw = hardware::detect();
     let keywords = sd_asset_keywords(&hw);
 
-    emit(app, "downloading", 0, 0, "Fetching stable-diffusion.cpp release info");
+    emit(
+        app,
+        "downloading",
+        0,
+        0,
+        "Fetching stable-diffusion.cpp release info",
+    );
 
     let client = reqwest::Client::builder()
         .user_agent("LocalMind/0.1")
@@ -278,8 +328,7 @@ pub async fn ensure_sd(app: &AppHandle) -> Result<PathBuf> {
             // Fallback: any archive with the platform keyword
             assets.iter().find(|a| {
                 let name = a["name"].as_str().unwrap_or("").to_ascii_lowercase();
-                (name.ends_with(".zip") || name.ends_with(".tar.gz"))
-                    && name.contains(keywords[0])
+                (name.ends_with(".zip") || name.ends_with(".tar.gz")) && name.contains(keywords[0])
             })
         })
         .ok_or_else(|| {
@@ -295,7 +344,13 @@ pub async fn ensure_sd(app: &AppHandle) -> Result<PathBuf> {
     let total = asset["size"].as_u64().unwrap_or(0);
     let name = asset["name"].as_str().unwrap_or("sd.zip").to_string();
 
-    emit(app, "downloading", 0, total, &format!("Downloading {}", name));
+    emit(
+        app,
+        "downloading",
+        0,
+        total,
+        &format!("Downloading {}", name),
+    );
 
     let mut response = client.get(url).send().await?.error_for_status()?;
     let mut downloaded: u64 = 0;
@@ -306,13 +361,25 @@ pub async fn ensure_sd(app: &AppHandle) -> Result<PathBuf> {
         file.write_all(&chunk).await?;
         downloaded += chunk.len() as u64;
         if downloaded % (1024 * 1024) < chunk.len() as u64 {
-            emit(app, "downloading", downloaded, total, "Downloading stable-diffusion.cpp");
+            emit(
+                app,
+                "downloading",
+                downloaded,
+                total,
+                "Downloading stable-diffusion.cpp",
+            );
         }
     }
     file.flush().await?;
     drop(file);
 
-    emit(app, "extracting", total, total, "Extracting stable-diffusion.cpp binary");
+    emit(
+        app,
+        "extracting",
+        total,
+        total,
+        "Extracting stable-diffusion.cpp binary",
+    );
 
     let target_dir = config::bin_dir();
     if name.ends_with(".zip") {

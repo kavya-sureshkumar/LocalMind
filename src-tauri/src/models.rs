@@ -70,7 +70,13 @@ pub async fn search_huggingface(query: &str, limit: u32) -> Result<Vec<ModelList
         limit
     );
 
-    let raw: Vec<serde_json::Value> = client.get(&url).send().await?.error_for_status()?.json().await?;
+    let raw: Vec<serde_json::Value> = client
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
 
     let ids: Vec<String> = raw
         .iter()
@@ -83,16 +89,23 @@ pub async fn search_huggingface(query: &str, limit: u32) -> Result<Vec<ModelList
     let mut out = Vec::new();
     for m in raw.iter().take(limit as usize) {
         let id = m["id"].as_str().unwrap_or("").to_string();
-        if id.is_empty() { continue; }
+        if id.is_empty() {
+            continue;
+        }
         let (author, name) = id.split_once('/').unwrap_or(("unknown", id.as_str()));
         let tree = trees.get(&id).cloned().unwrap_or_default();
         let files: Vec<ModelFile> = tree
             .iter()
             .filter_map(|s| {
                 let fname = s["path"].as_str()?;
-                if !fname.to_lowercase().ends_with(".gguf") { return None; }
+                if !fname.to_lowercase().ends_with(".gguf") {
+                    return None;
+                }
                 let quant = infer_quant(fname);
-                let size = s["lfs"]["size"].as_u64().or_else(|| s["size"].as_u64()).unwrap_or(0);
+                let size = s["lfs"]["size"]
+                    .as_u64()
+                    .or_else(|| s["size"].as_u64())
+                    .unwrap_or(0);
                 Some(ModelFile {
                     filename: fname.to_string(),
                     size_bytes: size,
@@ -102,7 +115,9 @@ pub async fn search_huggingface(query: &str, limit: u32) -> Result<Vec<ModelList
             })
             .collect();
 
-        if files.is_empty() { continue; }
+        if files.is_empty() {
+            continue;
+        }
 
         out.push(ModelListing {
             id: id.clone(),
@@ -112,7 +127,11 @@ pub async fn search_huggingface(query: &str, limit: u32) -> Result<Vec<ModelList
             likes: m["likes"].as_u64().unwrap_or(0),
             tags: m["tags"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default(),
             updated: m["lastModified"].as_str().map(String::from),
             description: m["description"].as_str().map(String::from),
@@ -132,7 +151,10 @@ async fn fetch_trees(
         let client = client.clone();
         let id = id.clone();
         async move {
-            let url = format!("https://huggingface.co/api/models/{}/tree/main?recursive=false", id);
+            let url = format!(
+                "https://huggingface.co/api/models/{}/tree/main?recursive=false",
+                id
+            );
             let res: Vec<serde_json::Value> = match client.get(&url).send().await {
                 Ok(r) => r.json().await.unwrap_or_default(),
                 Err(_) => Vec::new(),
@@ -261,10 +283,9 @@ pub fn model_path(id: &str) -> Result<PathBuf> {
 fn infer_quant(fname: &str) -> String {
     let lower = fname.to_lowercase();
     for q in [
-        "q2_k", "q3_k_s", "q3_k_m", "q3_k_l", "q4_0", "q4_1", "q4_k_s", "q4_k_m",
-        "q5_0", "q5_1", "q5_k_s", "q5_k_m", "q6_k", "q8_0", "f16", "bf16", "f32",
-        "iq1_s", "iq1_m", "iq2_xxs", "iq2_xs", "iq2_s", "iq2_m", "iq3_xxs", "iq3_s",
-        "iq3_m", "iq3_xs", "iq4_nl", "iq4_xs",
+        "q2_k", "q3_k_s", "q3_k_m", "q3_k_l", "q4_0", "q4_1", "q4_k_s", "q4_k_m", "q5_0", "q5_1",
+        "q5_k_s", "q5_k_m", "q6_k", "q8_0", "f16", "bf16", "f32", "iq1_s", "iq1_m", "iq2_xxs",
+        "iq2_xs", "iq2_s", "iq2_m", "iq3_xxs", "iq3_s", "iq3_m", "iq3_xs", "iq4_nl", "iq4_xs",
     ] {
         if lower.contains(q) {
             return q.to_uppercase();
@@ -278,8 +299,12 @@ fn infer_kind_with_repo(fname: &str, repo: &str) -> ModelKind {
     let r = repo.to_lowercase();
     if l.contains("mmproj") {
         ModelKind::Mmproj
-    } else if l.contains("llava") || l.contains("vision") || l.contains("-vl-")
-        || r.contains("llava") || r.contains("vision") || r.contains("-vl-")
+    } else if l.contains("llava")
+        || l.contains("vision")
+        || l.contains("-vl-")
+        || r.contains("llava")
+        || r.contains("vision")
+        || r.contains("-vl-")
     {
         ModelKind::Vision
     } else if l.contains("embed") || l.contains("bge-") || l.contains("nomic") {
@@ -299,7 +324,11 @@ fn safe_name(repo: &str, filename: &str) -> String {
 }
 
 fn emit_progress(app: &AppHandle, id: &str, downloaded: u64, total: u64, stage: &str) {
-    let percent = if total > 0 { downloaded as f64 / total as f64 * 100.0 } else { 0.0 };
+    let percent = if total > 0 {
+        downloaded as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
     let _ = app.emit(
         "model:progress",
         ModelDownloadProgress {

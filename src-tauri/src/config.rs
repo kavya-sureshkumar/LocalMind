@@ -26,7 +26,11 @@ pub fn data_dir() -> PathBuf {
 }
 
 pub fn llama_server_path() -> PathBuf {
-    let name = if cfg!(windows) { "llama-server.exe" } else { "llama-server" };
+    let name = if cfg!(windows) {
+        "llama-server.exe"
+    } else {
+        "llama-server"
+    };
     bin_dir().join(name)
 }
 

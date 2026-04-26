@@ -15,12 +15,28 @@ pub struct HardwareInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum Accelerator {
-    AppleSilicon { chip: String, unified_memory_gb: f64 },
-    Nvidia { name: String, vram_gb: f64, cuda_version: Option<String> },
-    Amd { name: String, vram_gb: f64 },
-    IntelArc { name: String },
+    AppleSilicon {
+        chip: String,
+        unified_memory_gb: f64,
+    },
+    Nvidia {
+        name: String,
+        vram_gb: f64,
+        cuda_version: Option<String>,
+    },
+    Amd {
+        name: String,
+        vram_gb: f64,
+    },
+    IntelArc {
+        name: String,
+    },
     Cpu,
 }
 
@@ -85,7 +101,11 @@ fn mac_chip_name() -> Option<String> {
         .output()
         .ok()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 fn detect_nvidia() -> Option<Accelerator> {

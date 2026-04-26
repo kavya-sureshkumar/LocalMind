@@ -3,10 +3,10 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::process::Stdio;
 use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +42,12 @@ struct ServerHandle {
 
 impl ServerHandle {
     fn new(default_port: u16) -> Self {
-        Self { child: None, port: default_port, model_id: None, mmproj_id: None }
+        Self {
+            child: None,
+            port: default_port,
+            model_id: None,
+            mmproj_id: None,
+        }
     }
 }
 
@@ -112,7 +117,9 @@ impl LlamaState {
 
         let ctx = settings.context_size.unwrap_or(4096);
         let n_gpu = settings.n_gpu_layers.unwrap_or(hw.recommended_n_gpu_layers);
-        let threads = settings.threads.unwrap_or((hw.cpu_cores as u32).saturating_sub(1).max(1));
+        let threads = settings
+            .threads
+            .unwrap_or((hw.cpu_cores as u32).saturating_sub(1).max(1));
 
         let mut cmd = Command::new(&binary);
         cmd.arg("-m").arg(&model);
@@ -122,7 +129,11 @@ impl LlamaState {
         cmd.arg("-t").arg(threads.to_string());
         cmd.arg("-ngl").arg(n_gpu.to_string());
         cmd.arg("--jinja");
-        cmd.arg("-fa").arg(if settings.flash_attn.unwrap_or(true) { "on" } else { "off" });
+        cmd.arg("-fa").arg(if settings.flash_attn.unwrap_or(true) {
+            "on"
+        } else {
+            "off"
+        });
         let mut loaded_mmproj: Option<String> = None;
         if let Some(mmproj_id) = &settings.mmproj_id {
             if let Ok(p) = models::model_path(mmproj_id) {
@@ -133,7 +144,9 @@ impl LlamaState {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().map_err(|e| anyhow!("failed to spawn llama-server: {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow!("failed to spawn llama-server: {e}"))?;
         pipe_output(app, &mut child, "chat");
 
         {
@@ -176,7 +189,9 @@ impl LlamaState {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().map_err(|e| anyhow!("failed to spawn embedding server: {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| anyhow!("failed to spawn embedding server: {e}"))?;
         pipe_output(app, &mut child, "embed");
 
         {
@@ -238,7 +253,9 @@ async fn kill_orphan_on_port(port: u16) {
         if let Ok(o) = out {
             for pid in String::from_utf8_lossy(&o.stdout).lines() {
                 let pid = pid.trim();
-                if pid.is_empty() { continue; }
+                if pid.is_empty() {
+                    continue;
+                }
                 let _ = tokio::process::Command::new("kill")
                     .arg("-9")
                     .arg(pid)
@@ -287,5 +304,7 @@ async fn wait_ready(port: u16) -> Result<()> {
         }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
-    Err(anyhow!("llama-server did not become ready on port {port} within 3 min"))
+    Err(anyhow!(
+        "llama-server did not become ready on port {port} within 3 min"
+    ))
 }

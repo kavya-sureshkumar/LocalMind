@@ -54,7 +54,10 @@ impl RagState {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        Arc::new(Self { store: RwLock::new(store), path })
+        Arc::new(Self {
+            store: RwLock::new(store),
+            path,
+        })
     }
 
     async fn save(&self) -> Result<()> {
@@ -91,10 +94,14 @@ impl RagState {
 
         let bytes_metadata = std::fs::metadata(path)?.len();
         let text = match ext.as_str() {
-            "txt" | "md" | "markdown" | "text" | "log" | "json" | "csv" | "xml" | "html" | "htm" => {
-                std::fs::read_to_string(path)?
+            "txt" | "md" | "markdown" | "text" | "log" | "json" | "csv" | "xml" | "html"
+            | "htm" => std::fs::read_to_string(path)?,
+            _ => {
+                return Err(anyhow!(
+                    "unsupported file type: {}. Use .txt, .md, .csv, or .json",
+                    ext
+                ))
             }
-            _ => return Err(anyhow!("unsupported file type: {}. Use .txt, .md, .csv, or .json", ext)),
         };
 
         let chunks = chunk_text(&text, 700, 80);
@@ -160,7 +167,10 @@ impl RagState {
         scored
             .into_iter()
             .take(top_k)
-            .map(|(score, chunk)| RetrievedChunk { chunk: chunk.clone(), score })
+            .map(|(score, chunk)| RetrievedChunk {
+                chunk: chunk.clone(),
+                score,
+            })
             .collect()
     }
 }
@@ -238,7 +248,10 @@ pub struct Embedder {
 
 impl Embedder {
     pub fn new(port: u16) -> Self {
-        Self { port, client: reqwest::Client::new() }
+        Self {
+            port,
+            client: reqwest::Client::new(),
+        }
     }
 
     pub async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
@@ -263,6 +276,9 @@ impl Embedder {
         let emb = json["data"][0]["embedding"]
             .as_array()
             .ok_or_else(|| anyhow!("bad embedding response"))?;
-        Ok(emb.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect())
+        Ok(emb
+            .iter()
+            .filter_map(|v| v.as_f64().map(|f| f as f32))
+            .collect())
     }
 }

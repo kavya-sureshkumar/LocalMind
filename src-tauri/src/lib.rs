@@ -29,9 +29,15 @@ mod parking_lot_lite {
     use std::sync::Mutex;
     pub struct Once<T>(Mutex<Option<T>>);
     impl<T: Clone> Once<T> {
-        pub fn new() -> Self { Self(Mutex::new(None)) }
-        pub fn set(&self, v: T) { *self.0.lock().unwrap() = Some(v); }
-        pub fn get(&self) -> Option<T> { self.0.lock().unwrap().clone() }
+        pub fn new() -> Self {
+            Self(Mutex::new(None))
+        }
+        pub fn set(&self, v: T) {
+            *self.0.lock().unwrap() = Some(v);
+        }
+        pub fn get(&self) -> Option<T> {
+            self.0.lock().unwrap().clone()
+        }
     }
 }
 
@@ -82,7 +88,11 @@ async fn start_llama(
     state: State<'_, Arc<AppStateHolder>>,
     settings: LlamaSettings,
 ) -> Result<LlamaStatus, String> {
-    state.llama.start(&app, settings).await.map_err(|e| e.to_string())
+    state
+        .llama
+        .start(&app, settings)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -110,7 +120,11 @@ async fn start_embedding_server(
 
 #[tauri::command]
 async fn stop_embedding_server(state: State<'_, Arc<AppStateHolder>>) -> Result<(), String> {
-    state.llama.stop_embedding().await.map_err(|e| e.to_string())
+    state
+        .llama
+        .stop_embedding()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -186,7 +200,11 @@ async fn sd_generate(
     state: State<'_, Arc<AppStateHolder>>,
     request: SdRequest,
 ) -> Result<SdImage, String> {
-    state.sd.generate(&app, request).await.map_err(|e| e.to_string())
+    state
+        .sd
+        .generate(&app, request)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

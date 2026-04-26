@@ -41,7 +41,9 @@ pub struct SdState {
 
 impl SdState {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self { busy: Mutex::new(false) })
+        Arc::new(Self {
+            busy: Mutex::new(false),
+        })
     }
 
     pub async fn is_busy(&self) -> bool {
@@ -66,7 +68,9 @@ impl SdState {
     }
 
     async fn run(&self, app: &AppHandle, req: SdRequest) -> Result<SdImage> {
-        let bin = binaries::ensure_sd(app).await.context("stable-diffusion.cpp not available")?;
+        let bin = binaries::ensure_sd(app)
+            .await
+            .context("stable-diffusion.cpp not available")?;
 
         let installed = models::list_installed().context("listing installed models")?;
         let model = installed
@@ -92,15 +96,24 @@ impl SdState {
         emit_progress(app, &id, "starting", 0, steps, "Loading model");
 
         let mut cmd = tokio::process::Command::new(&bin);
-        cmd.arg("-m").arg(&model_path)
-            .arg("-p").arg(&req.prompt)
-            .arg("-o").arg(&out_path)
-            .arg("-W").arg(width.to_string())
-            .arg("-H").arg(height.to_string())
-            .arg("--steps").arg(steps.to_string())
-            .arg("--cfg-scale").arg(format!("{:.2}", cfg))
-            .arg("-s").arg(seed.to_string())
-            .arg("--sampling-method").arg(sampler);
+        cmd.arg("-m")
+            .arg(&model_path)
+            .arg("-p")
+            .arg(&req.prompt)
+            .arg("-o")
+            .arg(&out_path)
+            .arg("-W")
+            .arg(width.to_string())
+            .arg("-H")
+            .arg(height.to_string())
+            .arg("--steps")
+            .arg(steps.to_string())
+            .arg("--cfg-scale")
+            .arg(format!("{:.2}", cfg))
+            .arg("-s")
+            .arg(seed.to_string())
+            .arg("--sampling-method")
+            .arg(sampler);
 
         if let Some(neg) = req.negative_prompt.as_deref().filter(|s| !s.is_empty()) {
             cmd.arg("-n").arg(neg);
@@ -111,8 +124,14 @@ impl SdState {
             .kill_on_drop(true);
 
         let mut child = cmd.spawn().context("spawning sd binary")?;
-        let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout from sd"))?;
-        let stderr = child.stderr.take().ok_or_else(|| anyhow!("no stderr from sd"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("no stdout from sd"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow!("no stderr from sd"))?;
 
         let app_stdout = app.clone();
         let app_stderr = app.clone();
@@ -141,7 +160,10 @@ impl SdState {
         }
 
         if !out_path.exists() {
-            return Err(anyhow!("sd did not produce output image at {}", out_path.display()));
+            return Err(anyhow!(
+                "sd did not produce output image at {}",
+                out_path.display()
+            ));
         }
 
         emit_progress(app, &id, "done", steps, steps, "Complete");
@@ -171,7 +193,14 @@ fn parse_and_emit(app: &AppHandle, id: &str, line: &str, total_steps: u32) {
         }
     }
     if line.contains("decode") || line.to_lowercase().contains("vae") {
-        emit_progress(app, id, "decoding", total_steps, total_steps, "Decoding image");
+        emit_progress(
+            app,
+            id,
+            "decoding",
+            total_steps,
+            total_steps,
+            "Decoding image",
+        );
     }
 }
 
@@ -187,6 +216,12 @@ fn emit_progress(app: &AppHandle, id: &str, stage: &str, step: u32, total: u32, 
     }
     let _ = app.emit(
         "sd:progress",
-        Progress { id, stage, step, total, message },
+        Progress {
+            id,
+            stage,
+            step,
+            total,
+            message,
+        },
     );
 }
