@@ -8,6 +8,7 @@ import { Marketplace } from "./pages/Marketplace";
 import { Models } from "./pages/Models";
 import { Knowledge } from "./pages/Knowledge";
 import { ImageGen } from "./pages/ImageGen";
+import { Synapse } from "./pages/Synapse";
 import { Settings } from "./pages/Settings";
 import { Connect } from "./pages/Connect";
 
@@ -70,6 +71,7 @@ function App() {
         {!remote && view === "models" && <Models />}
         {!remote && view === "knowledge" && <Knowledge />}
         {!remote && view === "image" && <ImageGen />}
+        {!remote && view === "synapse" && <Synapse />}
         {view === "settings" && <Settings />}
       </main>
     </div>

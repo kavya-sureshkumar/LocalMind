@@ -24,7 +24,7 @@ function abortChatRequest(convId: string) {
   }
 }
 
-type View = "chat" | "marketplace" | "models" | "knowledge" | "image" | "settings";
+type View = "chat" | "marketplace" | "models" | "knowledge" | "image" | "synapse" | "settings";
 
 interface AppState {
   view: View;

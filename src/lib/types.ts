@@ -77,6 +77,15 @@ export interface SynapseWorkerStatus {
   pid: number | null;
 }
 
+export interface SynapsePeer {
+  id: string;
+  hostname: string;
+  address: string;
+  port: number;
+  /** `address:port` — paste-ready for the workers list. */
+  endpoint: string;
+}
+
 export interface ModelDownloadProgress {
   id: string;
   downloaded: number;
