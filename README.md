@@ -39,6 +39,19 @@ LocalMind is a desktop app that runs open-source language models locally and exp
 |------|-------------|
 | ![LocalMind chat view](assets/screenshots/home_page.png) | ![LocalMind marketplace](assets/screenshots/marketplace.png) |
 
+## Install
+
+Grab a prebuilt installer from the [Releases page](https://github.com/s-suryakiran/LocalMind/releases) — no toolchain required:
+
+| Platform | File |
+|---|---|
+| Windows | `LocalMind_<version>_x64-setup.exe` (NSIS installer) |
+| macOS (Apple Silicon) | `LocalMind_<version>_aarch64.dmg` |
+| Linux | `localmind_<version>_amd64.deb` / `LocalMind_<version>_amd64.AppImage` |
+| Android (preview) | `LocalMind_<version>_android-debug.apk` |
+
+Or [build from source](#quickstart) if you'd rather hack on it.
+
 ## Quickstart
 
 ### Prerequisites
