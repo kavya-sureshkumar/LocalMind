@@ -137,12 +137,28 @@ impl SynapseState {
         pipe_output(app, &mut child);
 
         // Advertise on mDNS so the host's Synapse page picks us up automatically.
-        // Best-effort: if advertising fails (e.g. no multicast on this NIC) the
-        // worker still works, the host just has to type the IP manually.
+        // Best-effort: if advertising fails (e.g. no multicast on this NIC, or
+        // hostname has chars mdns-sd refuses) the worker still works, the host
+        // just has to type the IP manually. Surface the failure as a synapse:log
+        // line so the UI can show *why* discovery isn't happening.
         let advertised = match self.advertise(port).await {
-            Ok(info) => Some(info),
+            Ok(info) => {
+                let _ = app.emit(
+                    "synapse:log",
+                    serde_json::json!({
+                        "stream": "stdout",
+                        "line": format!("mDNS advertise OK: {}", info.get_fullname()),
+                    }),
+                );
+                Some(info)
+            }
             Err(e) => {
-                eprintln!("synapse: mDNS advertise failed: {e}");
+                let msg = format!("mDNS advertise failed: {e}");
+                eprintln!("synapse: {msg}");
+                let _ = app.emit(
+                    "synapse:log",
+                    serde_json::json!({ "stream": "stderr", "line": msg }),
+                );
                 None
             }
         };
@@ -271,21 +287,32 @@ impl SynapseState {
             guard.as_ref().unwrap().clone()
         };
 
-        let host = hostname::get()
+        // Real hostname for the TXT record (UI display) — may contain spaces,
+        // underscores, etc. Windows in particular often has hostnames mdns-sd's
+        // strict validator rejects.
+        let raw_host = hostname::get()
             .ok()
             .and_then(|h| h.into_string().ok())
             .unwrap_or_else(|| "localmind".to_string());
-        let instance = format!("{}-{}", host, port);
-        // mdns-sd needs a hostname ending in `.local.`; pick something stable
-        // per machine. The `hostname` crate gives us a sensible default.
-        let mdns_host = format!("{}.local.", host);
+
+        // Sanitized hostname for the actual mDNS record: ASCII alnum + hyphen
+        // only, falls back to `localmind` if everything was stripped. RFC 1123
+        // labels also can't start/end with a hyphen, so we trim those too.
+        let sanitized = sanitize_dns_label(&raw_host);
+        let dns_host = if sanitized.is_empty() {
+            "localmind".to_string()
+        } else {
+            sanitized
+        };
+        let instance = format!("{}-{}", dns_host, port);
+        let mdns_host = format!("{}.local.", dns_host);
 
         let ip = local_ip_address::local_ip()
             .map(|ip| ip.to_string())
             .map_err(|e| anyhow!("local ip: {e}"))?;
 
         let mut props: HashMap<String, String> = HashMap::new();
-        props.insert("hostname".to_string(), host.clone());
+        props.insert("hostname".to_string(), raw_host.clone());
         props.insert("version".to_string(), env!("CARGO_PKG_VERSION").to_string());
         props.insert("kind".to_string(), "rpc-server".to_string());
 
@@ -304,6 +331,23 @@ impl SynapseState {
             .map_err(|e| anyhow!("mdns register: {e}"))?;
         Ok(info)
     }
+}
+
+/// Coerce an arbitrary hostname into a valid DNS label per RFC 1123:
+/// ASCII letters, digits, and hyphens, no leading/trailing hyphen. Windows
+/// hostnames may contain underscores or spaces which mdns-sd rejects.
+fn sanitize_dns_label(input: &str) -> String {
+    let cleaned: String = input
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    cleaned.trim_matches('-').to_string()
 }
 
 fn pipe_output(app: &AppHandle, child: &mut Child) {
