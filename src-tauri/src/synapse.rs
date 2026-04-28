@@ -9,17 +9,40 @@
 use crate::{binaries, config};
 use anyhow::{anyhow, Result};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::net::UdpSocket;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 
 pub const DEFAULT_WORKER_PORT: u16 = 50052;
 const SERVICE_TYPE: &str = "_localmind-synapse._tcp.local.";
+
+// UDP broadcast beacon — runs alongside mDNS as a fallback for networks
+// where multicast is blocked (very common on Wi-Fi). Worker sends every
+// BEACON_INTERVAL; host listens on BEACON_PORT and ages peers out after
+// PEER_TTL of silence.
+const BEACON_PORT: u16 = 50053;
+const BEACON_INTERVAL: Duration = Duration::from_secs(3);
+const PEER_TTL: Duration = Duration::from_secs(15);
+const BEACON_MAGIC: &str = "localmind-synapse/1";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BeaconPayload {
+    /// Magic string so we can ignore stray UDP traffic on this port.
+    magic: String,
+    /// Stable per-machine ID so the host can dedupe.
+    id: String,
+    hostname: String,
+    port: u16,
+    version: String,
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +71,16 @@ struct WorkerHandle {
     port: u16,
     /// Owns the mDNS advertisement; dropping unregisters automatically.
     advertised: Option<ServiceInfo>,
+    /// Beacon broadcaster task; cancelled when the worker stops.
+    beacon: Option<JoinHandle<()>>,
+}
+
+/// Beacon entry tracked on the host side. We only emit a peer-added event
+/// when we first hear from a worker, then refresh `last_seen` on each ping.
+/// A janitor task removes entries that have gone silent for PEER_TTL.
+struct BeaconEntry {
+    peer: SynapsePeer,
+    last_seen: Instant,
 }
 
 pub struct SynapseState {
@@ -57,6 +90,10 @@ pub struct SynapseState {
     /// Peers we've seen, keyed by mDNS instance name. Cached so the UI can
     /// re-render on demand without waiting for the next browse tick.
     peers: Mutex<HashMap<String, SynapsePeer>>,
+    /// UDP-beacon peers, keyed by beacon `id`. Separate map so the janitor
+    /// can age them out without touching mDNS-discovered ones (mDNS does
+    /// its own TTL via ServiceRemoved events).
+    beacons: Mutex<HashMap<String, BeaconEntry>>,
 }
 
 impl SynapseState {
@@ -66,9 +103,11 @@ impl SynapseState {
                 child: None,
                 port: DEFAULT_WORKER_PORT,
                 advertised: None,
+                beacon: None,
             }),
             daemon: Mutex::new(None),
             peers: Mutex::new(HashMap::new()),
+            beacons: Mutex::new(HashMap::new()),
         })
     }
 
@@ -82,7 +121,18 @@ impl SynapseState {
     }
 
     pub async fn list_peers(&self) -> Vec<SynapsePeer> {
-        self.peers.lock().await.values().cloned().collect()
+        // Merge mDNS-discovered peers with UDP-beacon peers, keyed by endpoint
+        // so the same worker reachable via both routes shows up only once.
+        let mut by_endpoint: HashMap<String, SynapsePeer> = HashMap::new();
+        for p in self.peers.lock().await.values() {
+            by_endpoint.insert(p.endpoint.clone(), p.clone());
+        }
+        for entry in self.beacons.lock().await.values() {
+            by_endpoint
+                .entry(entry.peer.endpoint.clone())
+                .or_insert_with(|| entry.peer.clone());
+        }
+        by_endpoint.into_values().collect()
     }
 
     pub async fn stop_worker(&self) -> Result<()> {
@@ -90,6 +140,9 @@ impl SynapseState {
         if let Some(mut c) = w.child.take() {
             let _ = c.kill().await;
             let _ = c.wait().await;
+        }
+        if let Some(handle) = w.beacon.take() {
+            handle.abort();
         }
         if let Some(info) = w.advertised.take() {
             if let Some(d) = self.daemon.lock().await.as_ref() {
@@ -174,11 +227,30 @@ impl SynapseState {
             }
         };
 
+        // Spawn the UDP-broadcast beacon. This runs in parallel with mDNS as a
+        // fallback for networks where multicast is filtered (Wi-Fi APs with
+        // client isolation, Windows machines on Public profile, corp Wi-Fi…).
+        // Beacon uses 255.255.255.255, which is far more permissive on most
+        // networks than 224.0.0.251 multicast.
+        let beacon_handle = match spawn_beacon(app.clone(), port).await {
+            Ok(h) => Some(h),
+            Err(e) => {
+                let msg = format!("UDP beacon failed: {e}");
+                eprintln!("synapse: {msg}");
+                let _ = app.emit(
+                    "synapse:log",
+                    serde_json::json!({ "stream": "stderr", "line": msg }),
+                );
+                None
+            }
+        };
+
         {
             let mut w = self.worker.lock().await;
             w.child = Some(child);
             w.port = port;
             w.advertised = advertised;
+            w.beacon = beacon_handle;
         }
 
         let _ = app.emit("synapse:ready", serde_json::json!({ "port": port }));
@@ -217,9 +289,12 @@ impl SynapseState {
         let receiver = daemon
             .browse(SERVICE_TYPE)
             .map_err(|e| anyhow!("mdns browse: {e}"))?;
-        let app = app.clone();
+        // Clone for the mDNS browse task; the original `app` is reused below
+        // for the beacon listener + janitor.
+        let app_mdns = app.clone();
         let me = self.clone();
         tokio::spawn(async move {
+            let app = app_mdns;
             // mdns-sd's receiver is a flume channel; recv_async is awaitable.
             while let Ok(event) = receiver.recv_async().await {
                 match event {
@@ -284,6 +359,40 @@ impl SynapseState {
                 }
             }
         });
+
+        // UDP-beacon listener. Runs alongside mDNS so peers from either route
+        // both surface in the UI (deduped by endpoint in `list_peers`). Bound
+        // to 0.0.0.0:50053 — no special firewall coordination needed if the
+        // user already let LocalMind through, since this is the same exe.
+        match UdpSocket::bind(("0.0.0.0", BEACON_PORT)).await {
+            Ok(sock) => {
+                let _ = app.emit(
+                    "synapse:log",
+                    serde_json::json!({
+                        "stream": "stdout",
+                        "line": format!("UDP beacon listener on 0.0.0.0:{BEACON_PORT}"),
+                    }),
+                );
+                let app_l = app.clone();
+                let me_l = self.clone();
+                tokio::spawn(async move { run_beacon_listener(me_l, app_l, sock).await });
+
+                // Janitor: drop beacon entries after PEER_TTL of silence so a
+                // worker that vanishes (machine slept, network dropped, app
+                // killed) doesn't linger forever in the host's peer list.
+                let app_j = app.clone();
+                let me_j = self.clone();
+                tokio::spawn(async move { run_beacon_janitor(me_j, app_j).await });
+            }
+            Err(e) => {
+                let msg = format!("UDP beacon listener failed: {e}");
+                eprintln!("synapse: {msg}");
+                let _ = app.emit(
+                    "synapse:log",
+                    serde_json::json!({ "stream": "stderr", "line": msg }),
+                );
+            }
+        }
 
         Ok(())
     }
@@ -359,6 +468,147 @@ fn sanitize_dns_label(input: &str) -> String {
         })
         .collect();
     cleaned.trim_matches('-').to_string()
+}
+
+/// Spawn the UDP-broadcast beacon for this worker. Sends a small JSON packet
+/// to 255.255.255.255:BEACON_PORT every BEACON_INTERVAL. Returns a JoinHandle
+/// the caller stores so it can `.abort()` on stop_worker.
+async fn spawn_beacon(app: AppHandle, port: u16) -> Result<JoinHandle<()>> {
+    let raw_host = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "localmind".to_string());
+    let id = format!("beacon:{}-{}", sanitize_dns_label(&raw_host), port);
+    let payload = BeaconPayload {
+        magic: BEACON_MAGIC.to_string(),
+        id,
+        hostname: raw_host,
+        port,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let bytes = serde_json::to_vec(&payload).map_err(|e| anyhow!("beacon serialize: {e}"))?;
+
+    // Bind to an ephemeral port; we only ever send. Setting broadcast on the
+    // socket lets us hit the limited-broadcast address 255.255.255.255.
+    let sock = UdpSocket::bind(("0.0.0.0", 0))
+        .await
+        .map_err(|e| anyhow!("beacon bind: {e}"))?;
+    sock.set_broadcast(true)
+        .map_err(|e| anyhow!("beacon set_broadcast: {e}"))?;
+
+    let _ = app.emit(
+        "synapse:log",
+        serde_json::json!({
+            "stream": "stdout",
+            "line": format!(
+                "UDP beacon broadcasting on 255.255.255.255:{BEACON_PORT} every {}s",
+                BEACON_INTERVAL.as_secs(),
+            ),
+        }),
+    );
+
+    let handle = tokio::spawn(async move {
+        loop {
+            // Send to the limited broadcast address; routers won't forward it
+            // off the LAN, which is exactly what we want.
+            if let Err(e) = sock.send_to(&bytes, ("255.255.255.255", BEACON_PORT)).await {
+                let _ = app.emit(
+                    "synapse:log",
+                    serde_json::json!({
+                        "stream": "stderr",
+                        "line": format!("beacon send failed: {e}"),
+                    }),
+                );
+            }
+            tokio::time::sleep(BEACON_INTERVAL).await;
+        }
+    });
+    Ok(handle)
+}
+
+/// Receive UDP beacons forever. Each packet that parses cleanly and isn't from
+/// our own beacon ID becomes a peer-added (or refresh) event.
+async fn run_beacon_listener(state: Arc<SynapseState>, app: AppHandle, sock: UdpSocket) {
+    let own_id = format!(
+        "beacon:{}-{}",
+        sanitize_dns_label(
+            &hostname::get()
+                .ok()
+                .and_then(|h| h.into_string().ok())
+                .unwrap_or_else(|| "localmind".to_string())
+        ),
+        state.worker.lock().await.port
+    );
+
+    let mut buf = [0u8; 1024];
+    loop {
+        let (n, src) = match sock.recv_from(&mut buf).await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let payload: BeaconPayload = match serde_json::from_slice(&buf[..n]) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        if payload.magic != BEACON_MAGIC {
+            continue;
+        }
+        if payload.id == own_id {
+            continue;
+        }
+
+        let address = src.ip().to_string();
+        let endpoint = format!("{}:{}", address, payload.port);
+        let peer = SynapsePeer {
+            id: payload.id.clone(),
+            hostname: payload.hostname.clone(),
+            address,
+            port: payload.port,
+            endpoint,
+        };
+
+        // Insert or refresh. Only fire peer-added on first sight; refreshes
+        // are silent so the UI doesn't churn every 3s.
+        let mut beacons = state.beacons.lock().await;
+        let is_new = !beacons.contains_key(&payload.id);
+        beacons.insert(
+            payload.id.clone(),
+            BeaconEntry {
+                peer: peer.clone(),
+                last_seen: Instant::now(),
+            },
+        );
+        drop(beacons);
+        if is_new {
+            let _ = app.emit("synapse:peer-added", &peer);
+        }
+    }
+}
+
+/// Periodically prune beacon entries whose last_seen is older than PEER_TTL.
+/// Removed peers fire `synapse:peer-removed` so the UI can drop them from the
+/// list without waiting for a full refresh.
+async fn run_beacon_janitor(state: Arc<SynapseState>, app: AppHandle) {
+    let mut ticker = tokio::time::interval(Duration::from_secs(2));
+    loop {
+        ticker.tick().await;
+        let mut to_remove = Vec::new();
+        {
+            let now = Instant::now();
+            let mut beacons = state.beacons.lock().await;
+            beacons.retain(|id, entry| {
+                if now.duration_since(entry.last_seen) > PEER_TTL {
+                    to_remove.push(id.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        for id in to_remove {
+            let _ = app.emit("synapse:peer-removed", serde_json::json!({ "id": id }));
+        }
+    }
 }
 
 fn pipe_output(app: &AppHandle, child: &mut Child) {
