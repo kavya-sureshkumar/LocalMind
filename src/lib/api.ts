@@ -10,6 +10,7 @@ import type {
   RetrievedChunk,
   SdImage,
   SdRequest,
+  SynapsePeer,
   SynapseWorkerStatus,
 } from "./types";
 
@@ -110,6 +111,9 @@ export const api = {
     invoke<SynapseWorkerStatus>("start_synapse_worker", { port }),
   stopSynapseWorker: () => invoke<void>("stop_synapse_worker"),
   synapseWorkerStatus: () => invoke<SynapseWorkerStatus>("synapse_worker_status"),
+  restartSynapseWorker: (port?: number) =>
+    invoke<SynapseWorkerStatus>("restart_synapse_worker", { port }),
+  synapseListPeers: () => invoke<SynapsePeer[]>("synapse_list_peers"),
 };
 
 export type ChatContentPart =

@@ -14,7 +14,7 @@ use rag::{Document, RagState, RetrievedChunk};
 use sd::{SdImage, SdRequest, SdState};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use synapse::{SynapseState, SynapseWorkerStatus};
+use synapse::{SynapsePeer, SynapseState, SynapseWorkerStatus};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 struct AppStateHolder {
@@ -248,6 +248,26 @@ async fn synapse_worker_status(
     Ok(state.synapse.status().await)
 }
 
+#[tauri::command]
+async fn restart_synapse_worker(
+    app: AppHandle,
+    state: State<'_, Arc<AppStateHolder>>,
+    port: Option<u16>,
+) -> Result<SynapseWorkerStatus, String> {
+    state
+        .synapse
+        .restart_worker(&app, port)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn synapse_list_peers(
+    state: State<'_, Arc<AppStateHolder>>,
+) -> Result<Vec<SynapsePeer>, String> {
+    Ok(state.synapse.list_peers().await)
+}
+
 fn generate_pin() -> String {
     let raw = uuid::Uuid::new_v4().as_u128();
     format!("{:06}", (raw % 1_000_000) as u32)
@@ -284,6 +304,8 @@ pub fn run() {
             let llama2 = llama.clone();
             let pin2 = pin.clone();
             let tokens2 = tokens.clone();
+            let synapse2 = synapse.clone();
+            let handle_for_discovery = handle.clone();
             tauri::async_runtime::spawn(async move {
                 let resource_dir = handle.path().resource_dir().ok();
                 let static_dir = resource_dir.map(|d| d.join("dist")).filter(|p| p.exists());
@@ -295,6 +317,14 @@ pub fn run() {
                     Err(e) => {
                         eprintln!("LAN server failed: {e}");
                     }
+                }
+            });
+            // Kick off mDNS browsing immediately so the Synapse page sees
+            // peers as soon as it mounts, without each `useEffect` having to
+            // wait for the daemon to spin up.
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = synapse2.start_discovery(&handle_for_discovery).await {
+                    eprintln!("synapse discovery failed: {e}");
                 }
             });
             Ok(())
@@ -323,6 +353,8 @@ pub fn run() {
             start_synapse_worker,
             stop_synapse_worker,
             synapse_worker_status,
+            restart_synapse_worker,
+            synapse_list_peers,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

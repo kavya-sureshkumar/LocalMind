@@ -1,4 +1,4 @@
-import { MessageSquare, Store, Boxes, BookOpen, Image as ImageIcon, Settings as SettingsIcon, Plus, Trash2, X } from "lucide-react";
+import { MessageSquare, Store, Boxes, BookOpen, Image as ImageIcon, Network, Settings as SettingsIcon, Plus, Trash2, X } from "lucide-react";
 import { useApp } from "../lib/store";
 import { HardwareBadge } from "./HardwareBadge";
 import { cn } from "../lib/util";
@@ -70,6 +70,7 @@ export function Sidebar({
         {!remote && <NavItem icon={<Boxes size={15} />} label="My models" active={view === "models"} onClick={onPick(() => setView("models"))} />}
         {!remote && <NavItem icon={<BookOpen size={15} />} label="Knowledge" active={view === "knowledge"} onClick={onPick(() => setView("knowledge"))} />}
         {!remote && <NavItem icon={<ImageIcon size={15} />} label="Images" active={view === "image"} onClick={onPick(() => setView("image"))} />}
+        {!remote && <NavItem icon={<Network size={15} />} label="Synapse" active={view === "synapse"} onClick={onPick(() => setView("synapse"))} />}
         <NavItem icon={<SettingsIcon size={15} />} label="Settings" active={view === "settings"} onClick={onPick(() => setView("settings"))} />
       </nav>
 
